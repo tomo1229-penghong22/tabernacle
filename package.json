@@ -1,0 +1,15 @@
+{
+  "name": "tabernacle-3d",
+  "version": "0.1.0",
+  "private": true,
+  "description": "幕屋・中庭 3Dモデル（静的HTML+Three.js）。devDependenciesはテスト用途のみ。",
+  "type": "module",
+  "scripts": {
+    "serve": "http-server -p 8080 -c-1 .",
+    "verify": "node tools/verify.mjs"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "playwright": "^1.47.0"
+  }
+}
