@@ -192,7 +192,9 @@ function buildAltar() {
   const item = FURNITURE.altar;
   const { l, w, h } = item.size;
   const g = new THREE.Group(); g.name = 'altar';
-  const body = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), getMaterial('bronze'));
+  // 燔祭の祭壇は「bronzeAltar」専用マテリアルキーを使用し、緑青に加えて
+  // 祭壇特有の煤(すす)による黒ずみ(T6)を他の銅製品(洗盤・柱の台座等)とは別に反映する。
+  const body = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), getMaterial('bronzeAltar'));
   body.position.y = h / 2;
   body.castShadow = body.receiveShadow = true;
   body.userData.tag = 'dimBox'; // 検証用: 角・格子は箱本体の寸法に含めない
@@ -200,7 +202,7 @@ function buildAltar() {
 
   const hornGeo = new THREE.ConeGeometry(0.12, 0.3, 6);
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const horn = new THREE.Mesh(hornGeo, getMaterial('bronze'));
+    const horn = new THREE.Mesh(hornGeo, getMaterial('bronzeAltar'));
     horn.position.set(sx * (l / 2 - 0.15), h + 0.15, sz * (w / 2 - 0.15));
     g.add(horn);
   }
@@ -210,11 +212,11 @@ function buildAltar() {
   const barCount = 10;
   for (let i = 0; i < barCount; i++) {
     const t = (i / (barCount - 1)) - 0.5;
-    const barH = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, w * 1.01, 6), getMaterial('bronze'));
+    const barH = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, w * 1.01, 6), getMaterial('bronzeAltar'));
     barH.rotation.x = Math.PI / 2;
     barH.position.set(t * l, h * 0.45, 0);
     latticeGroup.add(barH);
-    const barV = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, l * 1.01, 6), getMaterial('bronze'));
+    const barV = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, l * 1.01, 6), getMaterial('bronzeAltar'));
     barV.rotation.z = Math.PI / 2;
     barV.position.set(0, h * 0.45, t * w);
     latticeGroup.add(barV);
