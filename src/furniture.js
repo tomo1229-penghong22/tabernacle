@@ -102,15 +102,27 @@ function buildLampstand(lights) {
   trunk.position.y = 0.1 + h * 0.4;
   g.add(trunk);
 
-  const flamePositions = [[0, h * 0.9]];
+  // 燭台の枝: 中央の軸＋左右に3本ずつ、計7つのともしび（25:31-37）。
+  // 差し戻し対応: 以前はTorusGeometry(半円)を左右対称に同一中心へ配置しており、
+  // 2つの半円が合わさって「円環(トーラス全周)」に見えてしまっていた。
+  // 中央軸から外側へ出て上へ曲がる弧(CatmullRomCurve3+TubeGeometry)に描き直し、
+  // 7つのともしびがほぼ同じ高さに横一列に並ぶようにする。枝の面はx-y平面(東西・上下)
+  // のみに広がり、z方向(南北)には広がらない(現状の向きを維持)。
+  const topY = 0.1 + h * 0.8; // 中心の軸の頂上＝中央のともしびの高さ
+  const flamePositions = [[0, topY]];
   for (let i = 1; i <= 3; i++) {
-    const by = 0.15 + (h * 0.75) * (i / 3.4);
+    const attachY = topY - i * 0.09; // 外側の枝ほど軸の低い位置から出る
+    const armReach = 0.10 + i * 0.07; // 外側の枝ほど横への張り出しが大きい
     for (const side of [-1, 1]) {
-      const branch = new THREE.Mesh(new THREE.TorusGeometry(0.12 * i * 0.33 + 0.08, 0.015, 6, 10, Math.PI), mat);
-      branch.rotation.z = side > 0 ? -Math.PI / 2 : Math.PI / 2;
-      branch.position.set(0, by, 0);
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, attachY, 0),
+        new THREE.Vector3(side * armReach * 0.5, attachY + (topY - attachY) * 0.15, 0),
+        new THREE.Vector3(side * armReach * 0.9, topY - (topY - attachY) * 0.1, 0),
+        new THREE.Vector3(side * armReach, topY, 0),
+      ]);
+      const branch = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.014, 6, false), mat);
       g.add(branch);
-      flamePositions.push([side * (0.16 + i * 0.05), by + 0.12]);
+      flamePositions.push([side * armReach, topY]);
     }
   }
 
