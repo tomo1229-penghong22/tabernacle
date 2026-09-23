@@ -184,19 +184,22 @@ export function getMaterial(key) {
         map: buildWoodTexture(), roughness: 0.85, metalness: 0,
       }));
     case MATERIALS.GOLD:
+      // R3対応: metalness:1だと環境マップの色がそのまま支配的になり、環境マップが
+      // 弱い/中立色の場合に金が黒〜暗褐色に見えてしまう。metalnessを少し下げて
+      // ベースカラー(黄金色)自体の寄与を残しつつ、envMapIntensityで反射を強めに保つ。
       return getOrBuild(key, () => new THREE.MeshStandardMaterial({
         map: buildMetalTexture([212, 175, 55]), color: 0xd4af37,
-        roughness: 0.35, metalness: 1,
+        roughness: 0.32, metalness: 0.82, envMapIntensity: 1.6,
       }));
     case MATERIALS.SILVER:
       return getOrBuild(key, () => new THREE.MeshStandardMaterial({
         map: buildMetalTexture([200, 200, 205]), color: 0xc7c9cf,
-        roughness: 0.4, metalness: 1,
+        roughness: 0.35, metalness: 0.85, envMapIntensity: 1.6,
       }));
     case MATERIALS.BRONZE:
       return getOrBuild(key, () => new THREE.MeshStandardMaterial({
         map: buildMetalTexture([150, 95, 45]), color: 0xb5793a,
-        roughness: 0.55, metalness: 0.9,
+        roughness: 0.5, metalness: 0.8, envMapIntensity: 1.4,
       }));
     case MATERIALS.LINEN:
       return getOrBuild(key, () => new THREE.MeshStandardMaterial({
