@@ -3,6 +3,7 @@
 // 視点プリセット(全景・入口・聖所内・至聖所内)。時刻スライダー・視点モード切替(T1)もここで配線する。
 
 import * as THREE from 'three';
+import { setWeathering, setWind, setRainAmount } from './materials.js';
 
 // 座標はすべてメートル(dimensions.jsのcub()変換後)。幕屋: 入口x=0, 垂れ幕x=-8.9, 背面x=-13.35。
 // 聖所内 x∈(-8.9,0)、至聖所内 x∈(-13.35,-8.9)。(以前のバージョンはキュビト値を誤ってメートルとして
@@ -83,6 +84,89 @@ export function setupUI(ctx) {
   });
   panel.appendChild(row('時刻(0-24h)', [timeSlider, timeLabel]));
 
+  // --- T6: 経年劣化・天候劣化 -------------------------------------------------
+  let ageVal = 0, sunVal = 0.7, rainFreqVal = 0.3;
+  function updateWeatheringUniforms() { setWeathering(ageVal, sunVal, rainFreqVal); }
+
+  const ageLabel = el('span', {}, ['0年']);
+  const ageSlider = el('input', { type: 'range', min: '0', max: '40', step: '1', value: '0', style: { width: '100%' } });
+  ageSlider.addEventListener('input', () => {
+    ageVal = parseFloat(ageSlider.value);
+    ageLabel.textContent = `${ageVal}年`;
+    updateWeatheringUniforms();
+  });
+  panel.appendChild(row('経年劣化(0-40年)', [ageSlider, ageLabel]));
+
+  const sunLabel = el('span', {}, ['0.70']);
+  const sunSlider = el('input', { type: 'range', min: '0', max: '1', step: '0.05', value: '0.7', style: { width: '100%' } });
+  sunSlider.addEventListener('input', () => {
+    sunVal = parseFloat(sunSlider.value);
+    sunLabel.textContent = sunVal.toFixed(2);
+    updateWeatheringUniforms();
+  });
+  panel.appendChild(row('日射強度(0-1、既定0.7)', [sunSlider, sunLabel]));
+
+  const rainFreqLabel = el('span', {}, ['0.30']);
+  const rainFreqSlider = el('input', { type: 'range', min: '0', max: '1', step: '0.05', value: '0.3', style: { width: '100%' } });
+  rainFreqSlider.addEventListener('input', () => {
+    rainFreqVal = parseFloat(rainFreqSlider.value);
+    rainFreqLabel.textContent = rainFreqVal.toFixed(2);
+    updateWeatheringUniforms();
+  });
+  panel.appendChild(row('降雨頻度(天候劣化、0-1、既定0.3)', [rainFreqSlider, rainFreqLabel]));
+
+  // --- T7: 風 -----------------------------------------------------------
+  let windSpeedVal = 0, windDirVal = 292.5; // 既定: 西北西から吹く
+  function updateWind() { setWind(windSpeedVal, windDirVal); }
+  updateWind();
+
+  const windSpeedLabel = el('span', {}, ['0 m/s']);
+  const windSpeedSlider = el('input', { type: 'range', min: '0', max: '20', step: '0.5', value: '0', style: { width: '100%' } });
+  windSpeedSlider.addEventListener('input', () => {
+    windSpeedVal = parseFloat(windSpeedSlider.value);
+    windSpeedLabel.textContent = `${windSpeedVal} m/s`;
+    updateWind();
+  });
+  panel.appendChild(row('風速(0-20 m/s)', [windSpeedSlider, windSpeedLabel]));
+
+  const windDirLabel = el('span', {}, ['292.5°(WNW)']);
+  const windDirSlider = el('input', { type: 'range', min: '0', max: '359', step: '1', value: '292.5', style: { width: '100%' } });
+  windDirSlider.addEventListener('input', () => {
+    windDirVal = parseFloat(windDirSlider.value);
+    windDirLabel.textContent = `${windDirVal.toFixed(0)}°`;
+    updateWind();
+  });
+  panel.appendChild(row('風向(吹いてくる方位角、既定 西北西)', [windDirSlider, windDirLabel]));
+
+  // --- T8: 雨 -----------------------------------------------------------
+  let rainAmountVal = 0;
+  const rainLabel = el('span', {}, ['0.00']);
+  const rainSlider = el('input', { type: 'range', min: '0', max: '1', step: '0.05', value: '0', style: { width: '100%' } });
+  rainSlider.addEventListener('input', () => {
+    rainAmountVal = parseFloat(rainSlider.value);
+    rainLabel.textContent = rainAmountVal.toFixed(2);
+    setRainAmount(rainAmountVal);
+  });
+  panel.appendChild(row('降雨量(0-1)', [rainSlider, rainLabel]));
+
+  // --- 共通: FPS表示 ON/OFF -------------------------------------------------
+  const fpsDisplay = el('div', {
+    id: 'fps-display',
+    style: {
+      position: 'fixed', top: '10px', right: '10px', background: 'rgba(0,0,0,0.6)',
+      color: '#7cff7c', padding: '4px 8px', fontFamily: 'monospace', fontSize: '13px',
+      borderRadius: '4px', zIndex: 1000, display: 'none',
+    },
+  }, ['FPS: --']);
+  document.body.appendChild(fpsDisplay);
+  const fpsCb = el('input', { type: 'checkbox' });
+  fpsCb.addEventListener('change', () => { fpsDisplay.style.display = fpsCb.checked ? 'block' : 'none'; });
+  const fpsId = 'fps-cb';
+  fpsCb.id = fpsId;
+  panel.appendChild(row('FPS表示(C7後半は実機で人間が計測)', [
+    el('div', {}, [fpsCb, el('label', { for: fpsId }, [' 画面内にFPSを表示する'])]),
+  ]));
+
   // --- 覆い4層 個別表示切替 ---------------------------------------------------
   const layerRow = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } });
   const layerDefs = [
@@ -146,7 +230,19 @@ export function setupUI(ctx) {
     info.style.display = 'block';
   }
 
-  return { showInfo, PRESETS, applyPreset };
+  function setAge(v) { ageVal = v; ageSlider.value = String(v); ageLabel.textContent = `${v}年`; updateWeatheringUniforms(); }
+  function setSun(v) { sunVal = v; sunSlider.value = String(v); sunLabel.textContent = v.toFixed(2); updateWeatheringUniforms(); }
+  function setRainFreqUI(v) { rainFreqVal = v; rainFreqSlider.value = String(v); rainFreqLabel.textContent = v.toFixed(2); updateWeatheringUniforms(); }
+  function setWindSpeedUI(v) { windSpeedVal = v; windSpeedSlider.value = String(v); windSpeedLabel.textContent = `${v} m/s`; updateWind(); }
+  function setWindDirUI(v) { windDirVal = v; windDirSlider.value = String(v); windDirLabel.textContent = `${v.toFixed(0)}°`; updateWind(); }
+  function setRainAmountUI(v) { rainAmountVal = v; rainSlider.value = String(v); rainLabel.textContent = v.toFixed(2); setRainAmount(v); }
+  function setFpsVisible(on) { fpsCb.checked = on; fpsDisplay.style.display = on ? 'block' : 'none'; }
+
+  return {
+    showInfo, PRESETS, applyPreset,
+    fpsDisplay,
+    setAge, setSun, setRainFreqUI, setWindSpeedUI, setWindDirUI, setRainAmountUI, setFpsVisible,
+  };
 }
 
 function row(labelText, children) {

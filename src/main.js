@@ -8,6 +8,12 @@ import { buildTabernacle } from './tabernacle.js';
 import { buildFurniture } from './furniture.js';
 import { setupUI } from './ui.js';
 import { COURTYARD, FRAME, TABERNACLE, FURNITURE } from './dimensions.js';
+import {
+  setWeathering, setWind, setRainAmount, updateEnvAnimation,
+  getWindToVector, getWetness, getRainAmount, computeWeatheredColor, ENV_UNIFORMS,
+} from './materials.js';
+import { buildDustSystem, buildRainSystem } from './particles.js';
+import { WIND_FREE_MAX } from './cloth.js';
 
 const scene = new THREE.Scene();
 
@@ -56,6 +62,10 @@ const furniture = buildFurniture(scene);
 
 const ui = setupUI({ camera, renderer, controls, environment, tabernacle });
 
+// --- T7/T8: 砂塵・雨粒パーティクル ------------------------------------------
+const dust = buildDustSystem(scene);
+const rain = buildRainSystem(scene);
+
 // --- 部材クリックで解説表示 (F7 / C8) ---------------------------------------
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -83,11 +93,26 @@ window.addEventListener('click', () => {
 });
 
 const clock = new THREE.Clock();
+let fpsFrames = 0, fpsAccum = 0;
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
   controls.update(dt);
+
+  updateEnvAnimation(dt);
+  const windVec = getWindToVector();
+  dust.update(dt, ENV_UNIFORMS.uWindSpeed.value, windVec);
+  rain.update(dt, getRainAmount(), ENV_UNIFORMS.uWindSpeed.value, windVec);
+
   renderer.render(scene, camera);
+
+  fpsFrames++; fpsAccum += dt;
+  if (fpsAccum >= 0.3) {
+    if (ui.fpsDisplay.style.display !== 'none') {
+      ui.fpsDisplay.textContent = `FPS: ${(fpsFrames / fpsAccum).toFixed(1)}`;
+    }
+    fpsFrames = 0; fpsAccum = 0;
+  }
 }
 animate();
 
@@ -198,3 +223,50 @@ window.setClipping = (on, constant) => {
   const cb = document.getElementById('clip-cb');
   if (cb) { cb.checked = on; cb.dispatchEvent(new Event('change')); }
 };
+
+// ---------------------------------------------------------------------------
+// フェーズ2 検証用API（T6劣化・T7風・T8雨。tools/verify.mjs から呼び出す）
+// ---------------------------------------------------------------------------
+
+// T6: 経年劣化・天候劣化
+window.setAge = (years) => ui.setAge(years);
+window.setSun = (v) => ui.setSun(v);
+window.setRainFreq = (v) => ui.setRainFreqUI(v);
+// シェーダーと全く同じ式で色を計算する(ヘッドレスでのピクセル読み取りに頼らず
+// 経年・方位による色変化を数値で検証するため。C4)。
+window.computeWeatheredColor = (materialKey, normal, worldY, ageYears, sun, rainFreq) => computeWeatheredColor(
+  materialKey,
+  { normal: new THREE.Vector3(normal.x, normal.y, normal.z), worldY, ageYears, sun, rainFreq },
+);
+
+// T7: 風
+window.setWindSpeed = (v) => ui.setWindSpeedUI(v);
+window.setWindDir = (deg) => ui.setWindDirUI(deg);
+window.getWindVector = () => getWindToVector();
+// 理論上の最大頂点変位量(m)。風シェーダー(materials.js injectEnv)と全く同じ式・定数を使用。
+// kind: 'wallHanging' | 'entranceCurtain' | 'roofDrape'
+window.getWindMaxDisplacement = (kind, speedMs) => {
+  const amp = speedMs * speedMs * 0.0018;
+  const maxFree = WIND_FREE_MAX[kind] ?? 0;
+  const mag = amp * maxFree;
+  // 風上面: push=1,flutterBias=0,wave=1 → 係数(0.5*1+0.5*1)=1.0
+  // 風下面: push=0,flutterBias=1,wave=1 → 係数(0.5+1)*1=1.5 ← こちらが理論上限
+  return mag * 1.5;
+};
+window.isDustVisible = () => scene.getObjectByName('dustParticles')?.visible ?? false;
+
+// T8: 雨
+window.setRainAmount = (v) => ui.setRainAmountUI(v);
+window.getWetness = () => getWetness();
+window.getRainAmountState = () => getRainAmount();
+// シェーダーと同じ濡れ係数(1.0=乾燥時と同じ明るさ, 0.55×元の明るさ=完全に濡れた状態)
+window.getExpectedWetFactor = (wetness) => 1 - Math.min(1, Math.max(0, wetness) * 0.8) * 0.45;
+window.isInsideTabernacleInterior = (x, y, z) => {
+  const b = ENV_UNIFORMS.uTabBounds.value;
+  const roofY = ENV_UNIFORMS.uTabRoofY.value;
+  return x > b.x && x < b.y && z > b.z && z < b.w && y < roofY;
+};
+
+// 共通
+window.setFpsVisible = (on) => ui.setFpsVisible(on);
+window.getFpsText = () => ui.fpsDisplay.textContent;
