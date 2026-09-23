@@ -12,6 +12,8 @@ const PRESETS = {
   entrance: { pos: [18, 2.2, 0], target: [0, 1.8, 0], label: '入口' },
   holyPlace: { pos: [-2.5, 1.8, 1.2], target: [-7.5, 1.3, -0.5], label: '聖所内' },
   mostHoly: { pos: [-9.6, 1.8, 1.6], target: [-11.1, 1.1, 0], label: '至聖所内' },
+  // R4: 北側(机の側, z<0)から燭台(z>0側)の正面を写す確認用の近接プリセット
+  lampstandFront: { pos: [-6.675, 1.5, -1.8], target: [-6.675, 0.9, 1.5575], label: '燭台正面' },
 };
 
 function el(tag, props = {}, children = []) {
