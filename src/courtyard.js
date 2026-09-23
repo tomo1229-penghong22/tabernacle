@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { COURTYARD, cub, CUBIT } from './dimensions.js';
 import { getMaterial } from './materials.js';
+import { applyWindFree } from './cloth.js';
 
 function makeInfo(nameJa, dims, material, source, note) {
   return { nameJa, dims, material, source, note };
@@ -55,8 +56,10 @@ function makePost(x, z, height) {
   return group;
 }
 
-function makeHangingPanel(width, height, material, x, z, rotY) {
-  const geo = new THREE.PlaneGeometry(width, height, Math.max(4, Math.round(width * 2)), 6);
+function makeHangingPanel(width, height, material, x, z, rotY, windKind) {
+  // 風(T7)で滑らかに揺れるよう、分割数は高さ方向も十分に取る。
+  const geo = new THREE.PlaneGeometry(width, height, Math.max(4, Math.round(width * 2)), 12);
+  applyWindFree(geo, windKind);
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.set(x, height / 2, z);
   mesh.rotation.y = rotY;
@@ -85,7 +88,7 @@ export function buildCourtyard(scene, controls) {
     const dirLabel = side === 1 ? '南' : '北';
     const xs = postsAlongEdge(COURTYARD.postCounts.north, halfL * 2, 0);
     xs.forEach((x) => posts.add(makePost(x, z, postH)));
-    const panel = makeHangingPanel(halfL * 2, hangH, linenMat, 0, z, 0);
+    const panel = makeHangingPanel(halfL * 2, hangH, linenMat, 0, z, 0, 'wallHanging');
     panel.userData.info = makeInfo(`中庭の掛け布（亜麻・${dirLabel}）`, `長さ${(halfL * 2).toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,18');
     hangings.add(panel);
     controls.registerCollider(panel);
@@ -96,7 +99,7 @@ export function buildCourtyard(scene, controls) {
     const x = -halfL;
     const zs = postsAlongEdge(COURTYARD.postCounts.west, halfW * 2, 0);
     zs.forEach((z) => posts.add(makePost(x, z, postH)));
-    const panel = makeHangingPanel(halfW * 2, hangH, linenMat, x, 0, Math.PI / 2);
+    const panel = makeHangingPanel(halfW * 2, hangH, linenMat, x, 0, Math.PI / 2, 'wallHanging');
     panel.userData.info = makeInfo('中庭の掛け布（亜麻・西）', `長さ${(halfW * 2).toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,18');
     hangings.add(panel);
     controls.registerCollider(panel);
@@ -114,7 +117,7 @@ export function buildCourtyard(scene, controls) {
       const centerZ = -(halfW + entranceHalf) / 2;
       const zs = postsAlongEdge(segCount, outerLen, centerZ);
       zs.forEach((z) => posts.add(makePost(x, z, postH)));
-      const panel = makeHangingPanel(outerLen, hangH, linenMat, x, centerZ, Math.PI / 2);
+      const panel = makeHangingPanel(outerLen, hangH, linenMat, x, centerZ, Math.PI / 2, 'wallHanging');
       panel.userData.info = makeInfo('中庭の掛け布（亜麻・東北）', `長さ${outerLen.toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,14');
       hangings.add(panel);
       controls.registerCollider(panel);
@@ -124,7 +127,7 @@ export function buildCourtyard(scene, controls) {
       const centerZ = (halfW + entranceHalf) / 2;
       const zs = postsAlongEdge(segCount, outerLen, centerZ);
       zs.forEach((z) => posts.add(makePost(x, z, postH)));
-      const panel = makeHangingPanel(outerLen, hangH, linenMat, x, centerZ, Math.PI / 2);
+      const panel = makeHangingPanel(outerLen, hangH, linenMat, x, centerZ, Math.PI / 2, 'wallHanging');
       panel.userData.info = makeInfo('中庭の掛け布（亜麻・東南）', `長さ${outerLen.toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,15');
       hangings.add(panel);
       controls.registerCollider(panel);
@@ -133,7 +136,7 @@ export function buildCourtyard(scene, controls) {
     {
       const zs = postsAlongEdge(COURTYARD.postCounts.entrance, COURTYARD.entranceWidth, 0);
       zs.forEach((z) => posts.add(makePost(x, z, postH)));
-      const panel = makeHangingPanel(COURTYARD.entranceWidth, hangH, entranceMat, x, 0, Math.PI / 2);
+      const panel = makeHangingPanel(COURTYARD.entranceWidth, hangH, entranceMat, x, 0, Math.PI / 2, 'entranceCurtain');
       panel.name = 'courtyardEntranceCurtain';
       panel.userData.passable = true;
       panel.userData.info = makeInfo('中庭の入口の幕', `幅${COURTYARD.entranceWidth.toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '青・紫・緋色の撚り糸と亜麻（織り）', '出エジプト記27:16');

@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { FRAME, TABERNACLE, ROOF, cub } from './dimensions.js';
 import { getMaterial } from './materials.js';
+import { applyWindFree } from './cloth.js';
 
 function makeInfo(nameJa, dims, material, source, note) {
   return { nameJa, dims, material, source, note };
@@ -193,7 +194,7 @@ function buildCrossbars(group) {
   return bars;
 }
 
-function buildScreen({ pillarCount, height, width, pedestalMaterial, x, materialKey, nameJa, source, passable, tag }) {
+function buildScreen({ pillarCount, height, width, pedestalMaterial, x, materialKey, nameJa, source, passable, tag, windKind }) {
   const g = new THREE.Group(); g.name = tag;
   const zs = [];
   const step = width / (pillarCount - 1);
@@ -214,10 +215,9 @@ function buildScreen({ pillarCount, height, width, pedestalMaterial, x, material
     g.add(pillar);
   });
 
-  const cloth = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, height, 20, 10),
-    getMaterial(materialKey),
-  );
+  const clothGeo = new THREE.PlaneGeometry(width, height, 20, 14);
+  applyWindFree(clothGeo, windKind);
+  const cloth = new THREE.Mesh(clothGeo, getMaterial(materialKey));
   cloth.position.set(x, height / 2, 0);
   cloth.rotation.y = Math.PI / 2;
   cloth.receiveShadow = true;
@@ -242,7 +242,9 @@ function buildRoofLayer({ key, nameJa, material, topLengthCubit, sideOverhangCub
   const gap = 0.025 * (layerIndex + 1);
   const topY = h + 0.05 + gap;
 
-  const top = new THREE.Mesh(new THREE.PlaneGeometry(topLength, topWidth, 24, 8), mat);
+  const topGeo = new THREE.PlaneGeometry(topLength, topWidth, 24, 8);
+  applyWindFree(topGeo, 'none'); // 屋根上面は枠に載っているだけで揺れない
+  const top = new THREE.Mesh(topGeo, mat);
   top.rotation.x = -Math.PI / 2;
   top.position.set((xBack + xEntrance) / 2, topY, 0);
   top.receiveShadow = top.castShadow = true;
@@ -251,7 +253,9 @@ function buildRoofLayer({ key, nameJa, material, topLengthCubit, sideOverhangCub
   if (sideOverhangCubit) {
     const overhang = cub(sideOverhangCubit);
     for (const side of [1, -1]) {
-      const panel = new THREE.Mesh(new THREE.PlaneGeometry(topLength, overhang, 24, 10), mat);
+      const geo = new THREE.PlaneGeometry(topLength, overhang, 24, 12);
+      applyWindFree(geo, 'roofDrape');
+      const panel = new THREE.Mesh(geo, mat);
       panel.position.set((xBack + xEntrance) / 2, topY - overhang / 2, side * (zHalf + 0.01 + gap));
       panel.castShadow = panel.receiveShadow = true;
       g.add(panel);
@@ -259,7 +263,9 @@ function buildRoofLayer({ key, nameJa, material, topLengthCubit, sideOverhangCub
   }
   if (backOverhangCubit) {
     const overhang = cub(backOverhangCubit);
-    const panel = new THREE.Mesh(new THREE.PlaneGeometry(topWidth, overhang, 16, 10), mat);
+    const geo = new THREE.PlaneGeometry(topWidth, overhang, 16, 12);
+    applyWindFree(geo, 'roofDrape');
+    const panel = new THREE.Mesh(geo, mat);
     panel.rotation.y = Math.PI / 2;
     panel.position.set(xBack - 0.01 - gap, topY - overhang / 2, 0);
     panel.castShadow = panel.receiveShadow = true;
@@ -267,7 +273,9 @@ function buildRoofLayer({ key, nameJa, material, topLengthCubit, sideOverhangCub
   }
   if (frontOverhangCubit) {
     const overhang = cub(frontOverhangCubit);
-    const flap = new THREE.Mesh(new THREE.PlaneGeometry(overhang, topWidth, 8, 8), mat);
+    const geo = new THREE.PlaneGeometry(overhang, topWidth, 8, 8);
+    applyWindFree(geo, 'none'); // 入口上部で水平に垂れる折り返し部分。上下端の区別がないため揺らさない
+    const flap = new THREE.Mesh(geo, mat);
     flap.rotation.x = -Math.PI / 2;
     flap.position.set(xEntrance + overhang / 2, topY, 0);
     flap.castShadow = flap.receiveShadow = true;
@@ -314,6 +322,7 @@ export function buildTabernacle(scene, controls) {
     source: '出エジプト記26:36-37',
     passable: TABERNACLE.entranceScreen.passable,
     tag: 'entranceScreen',
+    windKind: 'entranceCurtain',
   });
   group.add(entranceScreen.group);
   controls.registerCollider(entranceScreen.cloth, { passable: true });
