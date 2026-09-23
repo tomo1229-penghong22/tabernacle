@@ -11,9 +11,12 @@ import { COURTYARD, FRAME, TABERNACLE, FURNITURE } from './dimensions.js';
 
 const scene = new THREE.Scene();
 
-// 自動テスト(Playwright等。navigator.webdriver===trueで検出)ではソフトウェアレンダリングの
-// 負荷を下げ、タイムアウト/クラッシュを避ける。実ユーザーには影響しない（品質は変更しない）。
-const isAutomated = navigator.webdriver === true;
+// 自動テスト(Playwright等。navigator.webdriver===trueで検出)ではデフォルトでソフトウェア
+// レンダリングの負荷を下げ、タイムアウト/クラッシュを避ける。実ユーザーには影響しない。
+// ただし ?quality=full を付けた場合は自動テスト環境でも本番と同じフル品質で描画する
+// (R3差し戻し対応: C3判定用スクリーンショットは環境マップ・フル光源・フルシャドウで撮る必要があるため)。
+const forceFullQuality = new URLSearchParams(location.search).get('quality') === 'full';
+const isAutomated = navigator.webdriver === true && !forceFullQuality;
 window.__IS_AUTOMATED__ = isAutomated;
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 6000);
@@ -119,14 +122,43 @@ function countTagged(root, tag) {
   return n;
 }
 
+// R2差し戻し対応: 解説パネルの名称に含まれる方位(北/南)が、実際のワールド座標zの符号
+// (+z=南, PLAN A7)と矛盾していないかをシーン全体から検出する。
+function checkDirectionLabelMismatches() {
+  const mismatches = [];
+  const tmp = new THREE.Vector3();
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.userData || !o.userData.info) return;
+    const name = o.userData.info.nameJa || '';
+    const hasNorth = name.includes('北');
+    const hasSouth = name.includes('南');
+    if (!hasNorth && !hasSouth) return;
+    o.getWorldPosition(tmp);
+    if (hasNorth && tmp.z > 0.01) mismatches.push({ name, z: tmp.z, expected: 'z<=0 (北, +z=南のため)' });
+    if (hasSouth && tmp.z < -0.01) mismatches.push({ name, z: tmp.z, expected: 'z>=0 (南)' });
+  });
+  return mismatches;
+}
+
 window.verifyScene = function verifyScene() {
   const result = {};
 
   result.courtyard = box3Size(courtyard.hangings);
   result.courtyardHangingHeightTarget = COURTYARD.hangingHeight;
 
+  // 幕屋の内寸(C1判定対象): 西壁の内側面(=x:Back)と入口(x:Entrance)の間の距離(長さ)、
+  // 北壁・南壁の内側面同士の距離(幅)。壁のBox3から実測する(定数を単に転記しない)。
+  const innerLength = TABERNACLE.xEntrance - tabernacle.westWallBox.max.x;
+  const innerWidth = tabernacle.southWallBox.min.z - tabernacle.northWallBox.max.z;
+  result.tabernacleInner = { length: innerLength, width: innerWidth };
+
+  // 枠1枚の高さ(C1判定対象、台座を含まない枠そのものの高さ)
+  const frameBox = new THREE.Box3().setFromObject(tabernacle.sampleFrame);
+  result.frameHeight = frameBox.max.y - frameBox.min.y;
+
+  // 外形(参考表示のみ。内寸+枠厚×2 になっていることの確認用で、C1の判定対象ではない)
   const tabBox = new THREE.Box3().setFromObject(tabernacle.framesGroup);
-  result.tabernacleFrames = { x: tabBox.max.x - tabBox.min.x, y: tabBox.max.y - tabBox.min.y, z: tabBox.max.z - tabBox.min.z };
+  result.tabernacleOuter = { x: tabBox.max.x - tabBox.min.x, y: tabBox.max.y - tabBox.min.y, z: tabBox.max.z - tabBox.min.z };
 
   result.ark = dimBoxSize(furniture.ark);
   result.table = dimBoxSize(furniture.table);
@@ -143,9 +175,12 @@ window.verifyScene = function verifyScene() {
     bronzeSockets: countTagged(scene, 'bronzeSocket'),
   };
 
+  result.directionLabelMismatches = checkDirectionLabelMismatches();
+
   result.targets = {
     courtyard: { length: 45, width: 22, hangingHeight: 2.2 },
-    tabernacle: { length: 13.35, width: 4.45, height: 4.45 },
+    tabernacleInner: { length: TABERNACLE.innerLength, width: TABERNACLE.innerWidth },
+    frameHeight: FRAME.height,
     ark: FURNITURE.ark.size,
     table: FURNITURE.table.size,
     incenseAltar: FURNITURE.incenseAltar.size,

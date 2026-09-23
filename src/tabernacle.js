@@ -11,8 +11,8 @@ function makeInfo(nameJa, dims, material, source, note) {
 }
 
 const PEDESTAL_H = 0.22; // 台座の高さ（実装上の細部）。
-// 枠の全高(FRAME.height=10キュビト)は「台座+枠」の合計で外形高さに一致させる
-// （C1検証は構造全体のBox3高さで判定するため、台座分を枠メッシュから差し引く）。
+// R1差し戻し対応: 枠そのものが10キュビト(FRAME.height)。台座はその下に別途置かれ、
+// 枠メッシュの高さから台座分を差し引くことはしない（外形高さは台座の分だけ4.45mを超える）。
 
 function addSilverSocket(parent, x, z, w) {
   const h = PEDESTAL_H, d = w * 0.9;
@@ -37,12 +37,13 @@ function addBronzeSocket(parent, x, z, w) {
 }
 
 function makeFrame(width, thickness, totalHeight) {
-  const meshHeight = totalHeight - PEDESTAL_H;
-  const geo = new THREE.BoxGeometry(width * 0.97, meshHeight, thickness);
+  // R1: 枠メッシュの高さ=totalHeight(=FRAME.height, 10キュビト)そのもの。台座は差し引かない。
+  const geo = new THREE.BoxGeometry(width * 0.97, totalHeight, thickness);
   const mesh = new THREE.Mesh(geo, getMaterial('gold'));
-  mesh.position.y = PEDESTAL_H + meshHeight / 2; // 台座の上に載せる
+  mesh.position.y = PEDESTAL_H + totalHeight / 2; // 台座の上に載せる
   mesh.castShadow = mesh.receiveShadow = true;
-  mesh.userData.info = makeInfo('幕屋の枠', `幅${width.toFixed(2)}m×高さ${totalHeight.toFixed(2)}m(台座含む)×厚さ${thickness.toFixed(2)}m(A1仮定)`, 'アカシア材 金張り', '出エジプト記26:15-25');
+  mesh.userData.tag = 'frame';
+  mesh.userData.info = makeInfo('幕屋の枠', `幅${width.toFixed(2)}m×高さ${totalHeight.toFixed(2)}m×厚さ${thickness.toFixed(2)}m(A1仮定)`, 'アカシア材 金張り', '出エジプト記26:15-25');
   return mesh;
 }
 
@@ -61,10 +62,10 @@ function buildFrameWalls(group) {
   // (THREE.Objectは単一の親しか持てないため、ここでは参照を配列で集めてBox3を個別に計算する)
   const northWallMeshes = []; const southWallMeshes = []; const westWallMeshes = [];
 
-  // 北壁 (z = +zHalf 付近), 南壁 (z = -zHalf 付近): 各20枚, x: xBack -> xEntrance
+  // 南壁 (z = +zHalf 付近, +z=南), 北壁 (z = -zHalf 付近): 各20枚, x: xBack -> xEntrance
   for (const side of [1, -1]) {
     const z = side * (zHalf + t / 2);
-    const wallList = side === 1 ? northWallMeshes : southWallMeshes;
+    const wallList = side === 1 ? southWallMeshes : northWallMeshes;
     for (let i = 0; i < FRAME.counts.north; i++) {
       const x = xBack + (i + 0.5) * w;
       const frame = makeFrame(w, t, h);
@@ -96,7 +97,7 @@ function buildFrameWalls(group) {
     const remaining = (zHalf * 2 - regularSpan) / 2; // 片側の残り幅
     for (const s of [-1, 1]) {
       const z = s * (regularSpan / 2 + remaining / 2);
-      const cornerMeshH = h - PEDESTAL_H;
+      const cornerMeshH = h; // R1: 台座分を差し引かない
       const corner = new THREE.Mesh(
         new THREE.BoxGeometry(remaining * 0.95, cornerMeshH, t),
         getMaterial('gold'),
@@ -126,13 +127,20 @@ function buildFrameWalls(group) {
     meshes.forEach((m) => { m.updateWorldMatrix(true, false); box.union(new THREE.Box3().setFromObject(m)); });
     return box;
   }
-  const wallBoxes = [
-    boxFromMeshes(northWallMeshes),
-    boxFromMeshes(southWallMeshes),
-    boxFromMeshes(westWallMeshes),
-  ];
+  const northWallBox = boxFromMeshes(northWallMeshes);
+  const southWallBox = boxFromMeshes(southWallMeshes);
+  const westWallBox = boxFromMeshes(westWallMeshes);
+  const wallBoxes = [northWallBox, southWallBox, westWallBox];
 
-  return { framesGroup, socketsGroup, wallBoxes };
+  return {
+    framesGroup,
+    socketsGroup,
+    wallBoxes,
+    northWallBox,
+    southWallBox,
+    westWallBox,
+    sampleFrame: northWallMeshes[0], // C1検証用: 枠1枚の高さをこのメッシュで測る
+  };
 }
 
 function buildCrossbars(group) {
@@ -276,7 +284,7 @@ export function buildTabernacle(scene, controls) {
   const group = new THREE.Group();
   group.name = 'tabernacle';
 
-  const { framesGroup, wallBoxes } = buildFrameWalls(group);
+  const { framesGroup, wallBoxes, northWallBox, southWallBox, westWallBox, sampleFrame } = buildFrameWalls(group);
   wallBoxes.forEach((box) => controls.registerColliderBox(box));
   buildCrossbars(group);
 
@@ -320,5 +328,15 @@ export function buildTabernacle(scene, controls) {
 
   scene.add(group);
 
-  return { group, framesGroup, veil, entranceScreen, roofLayers };
+  return {
+    group,
+    framesGroup,
+    veil,
+    entranceScreen,
+    roofLayers,
+    northWallBox,
+    southWallBox,
+    westWallBox,
+    sampleFrame,
+  };
 }

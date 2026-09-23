@@ -79,13 +79,14 @@ export function buildCourtyard(scene, controls) {
   const entranceMat = getMaterial('linenEntrance');
   const hangings = new THREE.Group(); hangings.name = 'courtyardHangings';
 
-  // 南 (z = -halfW), 北 (z = +halfW): 20本ずつ、x方向に均等
+  // +z=南(PLAN A7)のため 北 (z = -halfW), 南 (z = +halfW): 20本ずつ、x方向に均等
   for (const side of [-1, 1]) {
     const z = side * halfW;
+    const dirLabel = side === 1 ? '南' : '北';
     const xs = postsAlongEdge(COURTYARD.postCounts.north, halfL * 2, 0);
     xs.forEach((x) => posts.add(makePost(x, z, postH)));
     const panel = makeHangingPanel(halfL * 2, hangH, linenMat, 0, z, 0);
-    panel.userData.info = makeInfo('中庭の掛け布（亜麻）', `長さ${(halfL * 2).toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,18');
+    panel.userData.info = makeInfo(`中庭の掛け布（亜麻・${dirLabel}）`, `長さ${(halfL * 2).toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,18');
     hangings.add(panel);
     controls.registerCollider(panel);
   }
@@ -108,23 +109,23 @@ export function buildCourtyard(scene, controls) {
     const outerLen = halfW - entranceHalf; // 片側の掛け布長さ (15キュビト相当)
     const segCount = COURTYARD.postCounts.east / 2; // 3本/区画
 
-    // 南側区画 z: [-halfW, -entranceHalf]
+    // 北側区画(+z=南のためcenterZ負=北側) z: [-halfW, -entranceHalf]
     {
       const centerZ = -(halfW + entranceHalf) / 2;
       const zs = postsAlongEdge(segCount, outerLen, centerZ);
       zs.forEach((z) => posts.add(makePost(x, z, postH)));
       const panel = makeHangingPanel(outerLen, hangH, linenMat, x, centerZ, Math.PI / 2);
-      panel.userData.info = makeInfo('中庭の掛け布（亜麻・東南）', `長さ${outerLen.toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,14');
+      panel.userData.info = makeInfo('中庭の掛け布（亜麻・東北）', `長さ${outerLen.toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,14');
       hangings.add(panel);
       controls.registerCollider(panel);
     }
-    // 北側区画 z: [entranceHalf, halfW]
+    // 南側区画(+z=南のためcenterZ正=南側) z: [entranceHalf, halfW]
     {
       const centerZ = (halfW + entranceHalf) / 2;
       const zs = postsAlongEdge(segCount, outerLen, centerZ);
       zs.forEach((z) => posts.add(makePost(x, z, postH)));
       const panel = makeHangingPanel(outerLen, hangH, linenMat, x, centerZ, Math.PI / 2);
-      panel.userData.info = makeInfo('中庭の掛け布（亜麻・東北）', `長さ${outerLen.toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,15');
+      panel.userData.info = makeInfo('中庭の掛け布（亜麻・東南）', `長さ${outerLen.toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '亜麻（撚り糸）', '出エジプト記27:9,15');
       hangings.add(panel);
       controls.registerCollider(panel);
     }
