@@ -3,9 +3,9 @@
 // 亜麻の掛け布(高さ2.2m)、入口幕(青・紫・緋・亜麻の織り、8.9m)。
 
 import * as THREE from 'three';
-import { COURTYARD, cub, CUBIT } from './dimensions.js';
+import { COURTYARD, cub, CUBIT, PILLAR_CLEARANCE_GAP_M } from './dimensions.js';
 import { getMaterial } from './materials.js';
-import { applyWindFree } from './cloth.js';
+import { applyWindFree, applyPillarGate, pillarClearanceSegments } from './cloth.js';
 
 function makeInfo(nameJa, dims, material, source, note) {
   return { nameJa, dims, material, source, note };
@@ -44,8 +44,9 @@ function makePost(x, z, height) {
   shaft.userData.info = makeInfo('中庭の柱', `直径${(COURTYARD.postDiameter * 100).toFixed(0)}cm×高さ${height.toFixed(2)}m`, 'アカシア材', '出エジプト記27:10-11');
   group.add(shaft);
 
+  const capitalR = COURTYARD.postDiameter / 2 + COURTYARD.capitalRadiusGrowth;
   const capital = new THREE.Mesh(
-    new THREE.CylinderGeometry(COURTYARD.postDiameter / 2 + 0.02, COURTYARD.postDiameter / 2 + 0.02, COURTYARD.capitalHeight, 10),
+    new THREE.CylinderGeometry(capitalR, capitalR, COURTYARD.capitalHeight, 10),
     getMaterial('silver'),
   );
   capital.position.y = height - COURTYARD.capitalHeight / 2;
@@ -56,10 +57,21 @@ function makePost(x, z, height) {
   return group;
 }
 
-function makeHangingPanel(width, height, material, x, z, rotY, windKind) {
+// pillarGate: T14。{ localXs, offsetHalfExtent, pillarSpacing } を渡すと、布の
+// 幅方向分割数を pillarClearanceSegments() で(辺が柱を切らないよう)十分な
+// 分割数に引き上げた上で、applyPillarGate() で柱近接属性を焼き込む
+// (entranceCurtainの入口幕専用。wallHangingでは渡さないため中庭の掛け布の
+// 揺れは変わらない)。この関数の呼び出し側で布の位置(x)自体もすでに柱の内側へ
+// オフセットしてある。
+function makeHangingPanel(width, height, material, x, z, rotY, windKind, pillarGate) {
   // 風(T7)で滑らかに揺れるよう、分割数は高さ方向も十分に取る。
-  const geo = new THREE.PlaneGeometry(width, height, Math.max(4, Math.round(width * 2)), 12);
+  const baseWidthSegments = Math.max(4, Math.round(width * 2));
+  const widthSegments = pillarGate
+    ? pillarClearanceSegments(width, pillarGate.pillarSpacing, pillarGate.offsetHalfExtent, baseWidthSegments)
+    : baseWidthSegments;
+  const geo = new THREE.PlaneGeometry(width, height, widthSegments, 12);
   applyWindFree(geo, windKind);
+  if (pillarGate) applyPillarGate(geo, pillarGate.localXs, pillarGate.offsetHalfExtent);
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.set(x, height / 2, z);
   mesh.rotation.y = rotY;
@@ -133,10 +145,16 @@ export function buildCourtyard(scene, controls) {
       controls.registerCollider(panel);
     }
     // 入口 4本 + 入口幕（通過可）
+    // T14(人間決定2026-09-25): 布は柱の内側(中庭側、-x方向)へオフセットして掛ける。
+    // オフセット量 = 柱の断面の最大半径/半幅(entrancePostHalfExtent) + 余裕(PILLAR_CLEARANCE_GAP_M)。
     {
       const zs = postsAlongEdge(COURTYARD.postCounts.entrance, COURTYARD.entranceWidth, 0);
       zs.forEach((z) => posts.add(makePost(x, z, postH)));
-      const panel = makeHangingPanel(COURTYARD.entranceWidth, hangH, entranceMat, x, 0, Math.PI / 2, 'entranceCurtain');
+      const offset = COURTYARD.entrancePostHalfExtent + PILLAR_CLEARANCE_GAP_M;
+      const clothX = x - offset;
+      const pillarSpacing = COURTYARD.entranceWidth / (COURTYARD.postCounts.entrance - 1);
+      const panel = makeHangingPanel(COURTYARD.entranceWidth, hangH, entranceMat, clothX, 0, Math.PI / 2, 'entranceCurtain',
+        { localXs: zs.map((z) => -z), offsetHalfExtent: COURTYARD.entrancePostHalfExtent, pillarSpacing });
       panel.name = 'courtyardEntranceCurtain';
       panel.userData.passable = true;
       panel.userData.info = makeInfo('中庭の入口の幕', `幅${COURTYARD.entranceWidth.toFixed(2)}m×高さ${hangH.toFixed(2)}m`, '青・紫・緋色の撚り糸と亜麻（織り）', '出エジプト記27:16');

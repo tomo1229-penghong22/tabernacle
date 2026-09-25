@@ -8,7 +8,7 @@
 // setWeathering()/setWind()/setRainAmount() を呼ぶだけで全マテリアルに反映される。
 
 import * as THREE from 'three';
-import { MATERIALS, TABERNACLE, FRAME } from './dimensions.js';
+import { MATERIALS, TABERNACLE, FRAME, PILLAR_CLEARANCE_GAP_M } from './dimensions.js';
 
 function makeCanvas(w, h) {
   const c = document.createElement('canvas');
@@ -468,7 +468,17 @@ function injectEnv(material, cfg) {
 
     // --- 頂点シェーダー ---
     let vertCommon = '#include <common>\nvarying vec3 vEnvWorldPos;\nvarying vec3 vEnvWorldNormal;';
-    if (isCloth) vertCommon += '\nattribute float windFree;\nuniform float uWindSpeed, uTime;\nuniform vec2 uWindDir;';
+    if (isCloth) {
+      vertCommon += `
+      attribute float windFree;
+      attribute float pillarGate;
+      attribute float pillarScreenMask;
+      uniform float uWindSpeed, uTime;
+      uniform vec2 uWindDir;
+      const float PILLAR_GAP_M = ${PILLAR_CLEARANCE_GAP_M};
+      const float PILLAR_GATE_SAFETY = 0.8;
+      const float SAFE_ALONG_M = 0.1;`; // T14: 数値の根拠はcloth.js/log/t14_report.md参照
+    }
     shader.vertexShader = shader.vertexShader.replace('#include <common>', vertCommon);
 
     shader.vertexShader = shader.vertexShader.replace(
@@ -489,6 +499,30 @@ function injectEnv(material, cfg) {
         float mag = amp * windFree;
         vec3 disp = vec3(uWindDir.x, 0.0, uWindDir.y) * mag * (push * 0.5 + (0.5 + flutterBias) * wave);
         disp.y += mag * 0.25 * sin(uTime * 6.0 + position.x * 7.0 + position.y * 3.0);
+        // T14: pillarGate(0=柱情報なし/柱から離れている, 1=柱の位置)、
+        // pillarScreenMask(0=柱情報なし, 1=入口の幕メッシュ全体で一定)。この材質は
+        // 複数の布種別(壁掛け布・屋根垂れ等)で共有されているため、必ずジオメトリ側の
+        // これらの属性で挙動を分岐させる。両方0のとき下のmix()はすべて恒等
+        // (mix(a,b,0)=a)になるため、この属性を持たない/常に0の布の揺れは
+        // 一切変わらない(cloth.jsのapplyWindFreeが既定値0を敷く)。
+        // disp.z はメッシュのrotation.y=90°を経てワールドX(柱のある外側)方向になる
+        // (両入口幕とも同じ回転)。柱の位置(pillarGate=1)では外側への変位を
+        // PILLAR_GAP_M*PILLAR_GATE_SAFETY 未満に滑らかに(飽和させて)頭打ちにし、
+        // 柱の面から出ないようにする。内側(disp.z<0)への変位は制約しない
+        // (反対側は自由になびく)。disp.x はワールドZ(沿面)方向になるため、柱から
+        // 離れていても大風で隣の柱の位置までサイドに流れ込んで貫通しないよう、
+        // 入口の幕全体(pillarScreenMask=1)で沿面変位の絶対値をSAFE_ALONG_M未満に
+        // 頭打ちにし、柱の位置(pillarGate=1)では沿面変位を完全に0にする(T14差し戻し:
+        // 両端の柱は北壁・南壁の枠の内側面ともゼロ距離で接しており、わずかな沿面変位
+        // でも枠に貫通するため、柱位置では横滑りを一切許さない)。
+        float pillarAllowOut = max(PILLAR_GAP_M * PILLAR_GATE_SAFETY, 1e-5);
+        float dispZGated = disp.z > 0.0 ? pillarAllowOut * (1.0 - exp(-disp.z / pillarAllowOut)) : disp.z;
+        disp.z = mix(disp.z, dispZGated, pillarGate);
+        float alongCapped = disp.x >= 0.0
+          ? SAFE_ALONG_M * (1.0 - exp(-disp.x / SAFE_ALONG_M))
+          : -SAFE_ALONG_M * (1.0 - exp(disp.x / SAFE_ALONG_M));
+        disp.x = mix(disp.x, alongCapped, pillarScreenMask);
+        disp.x = mix(disp.x, 0.0, pillarGate);
         transformed += disp;
       }`;
     }

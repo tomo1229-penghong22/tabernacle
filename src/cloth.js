@@ -90,4 +90,91 @@ export function applyWindFree(geometry, kind) {
     arr[i] = free;
   }
   geometry.setAttribute('windFree', new THREE.BufferAttribute(arr, 1));
+
+  // T14: pillarGate/pillarScreenMask は柱の近接情報を持つ布(入口の幕2枚)専用の
+  // 属性。既定は全頂点0(=柱情報なし=ゲート無効)。materials.js の頂点シェーダーは
+  // これらが0のとき既存の変位式と完全に同じ結果になるため、ここで既定値を敷いて
+  // おくことで wallHanging・roofDrape 等の既存の揺れは一切変えずに、
+  // entranceCurtainの2枚だけ applyPillarGate() で上書きして柱回避を効かせられる。
+  if (!geometry.attributes.pillarGate) {
+    geometry.setAttribute('pillarGate', new THREE.BufferAttribute(new Float32Array(pos.count), 1));
+  }
+  if (!geometry.attributes.pillarScreenMask) {
+    geometry.setAttribute('pillarScreenMask', new THREE.BufferAttribute(new Float32Array(pos.count), 1));
+  }
+}
+
+// T14: 入口の幕(width方向)の頂点グリッドが、柱の近くで「辺(隣接頂点間)が柱を
+// 切らない」ことを解像度によらず保証するために必要な最小の幅分割数を計算する。
+// 証明の要旨(詳細はlog/t14_report.md):
+//  - applyPillarGate() は柱までのローカルx距離が
+//    plateauEnd = offsetHalfExtent + 頂点間隔 以下では pillarGate=1(=変位が
+//    定数になる「平坦部」)にする。頂点間隔ちょうど1つ分だけ offsetHalfExtent
+//    より広く取ることで、「offsetHalfExtent以内の頂点」から1辺で
+//    「plateauEndの外の頂点」へ飛ぶことは構造的に起こらない(隣接頂点は
+//    高々1間隔しか離れていないため)。
+//  - よって全ての辺は (a) 両端がplateauEnd以内で変位が定数(=安全な定数距離)、
+//    または (b) 少なくとも近い方の端が既にoffsetHalfExtentの外(=柱の断面が
+//    取りうる最大半径/半幅より遠い。柱の高さ方向のどの断面よりも遠いので、
+//    変位がいくら大きくても柱には当たらない)のどちらかになり、辺の線形補間
+//    (三角形の面)が柱を切ることはない。
+// これが成り立つには、plateauEnd = offsetHalfExtent + 頂点間隔 が、隣の柱との
+// 間の「自由に膨らむべき区間」を食い潰さない程度(柱間隔に対して
+// PLATEAU_END_SPACING_FRACTION以下)である必要があり、そのために頂点間隔
+// (=頂点解像度)を十分細かくする。
+const PLATEAU_END_SPACING_FRACTION = 0.3;
+export function pillarClearanceSegments(width, pillarSpacing, offsetHalfExtent, minSegments) {
+  const maxVertexSpacing = Math.max(1e-3, pillarSpacing * PLATEAU_END_SPACING_FRACTION - offsetHalfExtent);
+  const neededSegments = Math.ceil(width / maxVertexSpacing);
+  const intervals = Math.max(1, Math.round(width / pillarSpacing)); // 柱間の区間数(pillarCount-1)
+  return Math.ceil(Math.max(neededSegments, minSegments) / intervals) * intervals;
+}
+
+// T14: 入口の幕(courtyard入口・幕屋入口)専用。柱のローカルx位置(pillarLocalXs、
+// 布のPlaneGeometryのローカルx系。makeHangingPanel/buildScreenいずれもrotation.y=
+// 90°で、ローカルx = -ワールドz の関係)に近い頂点ほど1、離れるほど0になる
+// 'pillarGate' 属性と、メッシュ全体で一定の 'pillarScreenMask'(=1) 属性を焼き込み、
+// applyWindFree()が敷いた既定の0を上書きする。
+//
+// offsetHalfExtent: この柱の(布が占める高さ範囲内での)断面の最大半径/半幅。
+//   呼び出し側(courtyard.js/tabernacle.js)で布の位置オフセット計算にも使う値と
+//   同じものを渡し、シェーダー側の停止境界とジオメトリのオフセットを整合させる。
+//   呼び出し前に pillarClearanceSegments() で十分な分割数にしておくこと
+//   (辺が柱を切らないことの証明の前提)。
+const PILLAR_GATE_EXTRA_MULT = 1.0; // 平坦部終端(plateauEnd)の外側にさらに設ける減衰幅の倍率(offsetHalfExtent比)
+const PILLAR_GATE_SPACING_FRACTION = 0.4; // 柱間隔に対する減衰帯外縁の上限比率(PLATEAU_END_SPACING_FRACTIONより緩め、平坦部の外に減衰の余地を残す)
+export function applyPillarGate(geometry, pillarLocalXs, offsetHalfExtent) {
+  const xs = [...pillarLocalXs].sort((a, b) => a - b);
+  let minSpacing = Infinity;
+  for (let i = 1; i < xs.length; i++) minSpacing = Math.min(minSpacing, xs[i] - xs[i - 1]);
+  if (!isFinite(minSpacing)) minSpacing = offsetHalfExtent * 10; // 柱1本のみの場合の保険
+
+  const pos = geometry.attributes.position;
+  let vertexSpacing = Infinity;
+  {
+    const seen = new Set();
+    for (let i = 0; i < pos.count; i++) seen.add(Math.round(pos.getX(i) * 1e6) / 1e6);
+    const sortedXs = [...seen].sort((a, b) => a - b);
+    for (let i = 1; i < sortedXs.length; i++) vertexSpacing = Math.min(vertexSpacing, sortedXs[i] - sortedXs[i - 1]);
+    if (!isFinite(vertexSpacing)) vertexSpacing = minSpacing;
+  }
+
+  const plateauEnd = offsetHalfExtent + vertexSpacing;
+  let falloffOuterEdge = Math.max(plateauEnd + offsetHalfExtent * PILLAR_GATE_EXTRA_MULT, plateauEnd + vertexSpacing);
+  falloffOuterEdge = Math.min(falloffOuterEdge, minSpacing * PILLAR_GATE_SPACING_FRACTION);
+  falloffOuterEdge = Math.max(falloffOuterEdge, plateauEnd + vertexSpacing * 0.5);
+
+  const arr = new Float32Array(pos.count);
+  const maskArr = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    let dist = Infinity;
+    for (const px of pillarLocalXs) dist = Math.min(dist, Math.abs(x - px));
+    const t = THREE.MathUtils.smoothstep(dist, plateauEnd, falloffOuterEdge);
+    arr[i] = 1 - t;
+    maskArr[i] = 1;
+  }
+  geometry.setAttribute('pillarGate', new THREE.BufferAttribute(arr, 1));
+  geometry.setAttribute('pillarScreenMask', new THREE.BufferAttribute(maskArr, 1));
+  return { plateauEnd, falloffOuterEdge, vertexSpacing, minSpacing };
 }

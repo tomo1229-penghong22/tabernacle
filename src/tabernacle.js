@@ -3,15 +3,15 @@
 // 入口の幕(5柱・銅台座5)、屋根4層(平屋根・側面背面に垂らす。個別ON/OFF可能)。
 
 import * as THREE from 'three';
-import { FRAME, TABERNACLE, ROOF, ROOF_SAG_GATE_MARGIN_M, cub } from './dimensions.js';
+import { FRAME, TABERNACLE, ROOF, ROOF_SAG_GATE_MARGIN_M, PILLAR_CLEARANCE_GAP_M, cub } from './dimensions.js';
 import { getMaterial } from './materials.js';
-import { applyWindFree, applyRoofSag } from './cloth.js';
+import { applyWindFree, applyRoofSag, applyPillarGate, pillarClearanceSegments } from './cloth.js';
 
 function makeInfo(nameJa, dims, material, source, note) {
   return { nameJa, dims, material, source, note };
 }
 
-const PEDESTAL_H = 0.22; // 台座の高さ（実装上の細部）。
+export const PEDESTAL_H = 0.22; // 台座の高さ（実装上の細部）。T14検証(tools/verify_t14.mjs)が参照するためexport。
 // R1差し戻し対応: 枠そのものが10キュビト(FRAME.height)。台座はその下に別途置かれ、
 // 枠メッシュの高さから台座分を差し引くことはしない（外形高さは台座の分だけ4.45mを超える）。
 
@@ -194,19 +194,20 @@ function buildCrossbars(group) {
   return bars;
 }
 
-function buildScreen({ pillarCount, height, width, pedestalMaterial, x, materialKey, nameJa, source, passable, tag, windKind }) {
+function buildScreen({ pillarCount, height, width, pedestalMaterial, x, materialKey, nameJa, source, passable, tag, windKind, pillarClearance }) {
   const g = new THREE.Group(); g.name = tag;
   const zs = [];
   const step = width / (pillarCount - 1);
   for (let i = 0; i < pillarCount; i++) zs.push(-width / 2 + i * step);
 
+  const { radius: pillarR, socketW } = TABERNACLE.screenPillar;
   zs.forEach((z) => {
     const pedH = pedestalMaterial === 'silver' ? 0.22 : 0.2;
-    if (pedestalMaterial === 'silver') addSilverSocket(g, x, z, 0.5);
-    else addBronzeSocket(g, x, z, 0.5);
+    if (pedestalMaterial === 'silver') addSilverSocket(g, x, z, socketW);
+    else addBronzeSocket(g, x, z, socketW);
 
     const pillar = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.09, 0.09, height - pedH, 10),
+      new THREE.CylinderGeometry(pillarR, pillarR, height - pedH, 10),
       getMaterial('gold'),
     );
     pillar.position.set(x, pedH + (height - pedH) / 2, z);
@@ -215,10 +216,25 @@ function buildScreen({ pillarCount, height, width, pedestalMaterial, x, material
     g.add(pillar);
   });
 
-  const clothGeo = new THREE.PlaneGeometry(width, height, 20, 14);
+  // T14(人間決定2026-09-25): 入口の幕(pillarClearance=true)のみ、布を柱の内側
+  // (聖所側、-x方向)へオフセットして掛ける。垂れ幕(veil)は風で揺れないため対象外。
+  // 幅方向分割数も、柱近くで辺が柱を切らないよう pillarClearanceSegments() で
+  // 引き上げる(基準の20分割のままでは幕屋入口の幕には不足するため。理由は
+  // cloth.js の pillarClearanceSegments/applyPillarGate のコメント参照)。
+  const baseWidthSegments = 20;
+  const widthSegments = pillarClearance
+    ? pillarClearanceSegments(width, step, TABERNACLE.screenPillar.halfExtent, baseWidthSegments)
+    : baseWidthSegments;
+  const clothGeo = new THREE.PlaneGeometry(width, height, widthSegments, 14);
   applyWindFree(clothGeo, windKind);
+  let clothX = x;
+  if (pillarClearance) {
+    const offset = TABERNACLE.screenPillar.halfExtent + PILLAR_CLEARANCE_GAP_M;
+    clothX = x - offset;
+    applyPillarGate(clothGeo, zs.map((z) => -z), TABERNACLE.screenPillar.halfExtent);
+  }
   const cloth = new THREE.Mesh(clothGeo, getMaterial(materialKey));
-  cloth.position.set(x, height / 2, 0);
+  cloth.position.set(clothX, height / 2, 0);
   cloth.rotation.y = Math.PI / 2;
   cloth.receiveShadow = true;
   cloth.userData.passable = passable;
@@ -364,6 +380,7 @@ export function buildTabernacle(scene, controls) {
     passable: TABERNACLE.entranceScreen.passable,
     tag: 'entranceScreen',
     windKind: 'entranceCurtain',
+    pillarClearance: true,
   });
   group.add(entranceScreen.group);
   controls.registerCollider(entranceScreen.cloth, { passable: true });

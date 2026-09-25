@@ -38,10 +38,23 @@ export const COURTYARD = {
   postDiameter: 0.15, // 実装上の細部（PLAN未記載の太さ）
   pedestalSize: { x: 0.3, y: 0.2, z: 0.3 }, // 銅の台座（実装上の細部）
   capitalHeight: 0.06, // 銀の柱頭バンド（実装上の細部）
+  capitalRadiusGrowth: 0.02, // 実装上の細部（柱頭が柱身よりどれだけ太いか）
 
   entranceWidthCubit: 20, // 入口幕の幅
   get entranceWidth() { return cub(this.entranceWidthCubit); }, // ≈8.9m
+
+  // T14: 入口の幕を柱の内側(中庭側)へ寄せるオフセット計算に使う、柱の断面の
+  // 最大半径/半幅（台座・柱身・柱頭のうち最大のもの。布が占める高さ全域[0,hangingHeight]
+  // をこの3区間でカバーしているので、この最大値だけで全高をカバーできる）。
+  get entrancePostHalfExtent() {
+    return Math.max(this.pedestalSize.x / 2, this.postDiameter / 2, this.postDiameter / 2 + this.capitalRadiusGrowth);
+  },
 };
+
+// T14: 入口の幕を柱の内側へ寄せる際に追加する、柱の断面からの余裕(クリアランス)。
+// 既存コードの同種の余裕(例: 柱頭の張り出し0.02m、屋根オーバーハング接合部の0.01m、
+// 屋根層の重なりオフセット0.025m刻み)と同じ桁数(1〜2.5cm)に揃えた。
+export const PILLAR_CLEARANCE_GAP_M = 0.02;
 
 // ---------------------------------------------------------------------------
 // 幕屋本体 (26章) — T4
@@ -104,6 +117,17 @@ export const TABERNACLE = {
     widthCubit: 10,
     get width() { return cub(this.widthCubit); },
     passable: true, // T1要件: 入口の幕は通過可
+  },
+
+  // 垂れ幕・入口の幕で共通の柱の断面（buildScreenで両方に使う実装上の細部）。
+  // T14: 入口の幕を柱の内側へ寄せるオフセットは screenPillar.halfExtent を使う
+  // （台座・柱身のうち大きい方。両画面とも布は台座の高さ[0, socketH]〜柱身の
+  // 高さ[socketH, height]の全域をカバーする）。
+  screenPillar: {
+    radius: 0.09, // 実装上の細部（柱の太さ）
+    socketW: 0.5, // 実装上の細部（台座の基準幅。実寸法は socketW*0.9）
+    get socketHalfExtent() { return (this.socketW * 0.9) / 2; },
+    get halfExtent() { return Math.max(this.radius, this.socketHalfExtent); },
   },
 
   silverSocketsTotal: 100, // A4: 枠48×2 + 垂れ幕柱4 = 100
