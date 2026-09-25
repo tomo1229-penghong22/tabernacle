@@ -3,9 +3,9 @@
 // 入口の幕(5柱・銅台座5)、屋根4層(平屋根・側面背面に垂らす。個別ON/OFF可能)。
 
 import * as THREE from 'three';
-import { FRAME, TABERNACLE, ROOF, cub } from './dimensions.js';
+import { FRAME, TABERNACLE, ROOF, ROOF_SAG_GATE_MARGIN_M, cub } from './dimensions.js';
 import { getMaterial } from './materials.js';
-import { applyWindFree } from './cloth.js';
+import { applyWindFree, applyRoofSag } from './cloth.js';
 
 function makeInfo(nameJa, dims, material, source, note) {
   return { nameJa, dims, material, source, note };
@@ -231,9 +231,15 @@ function buildScreen({ pillarCount, height, width, pedestalMaterial, x, material
 function buildRoofLayer({ key, nameJa, material, topLengthCubit, sideOverhangCubit, backOverhangCubit, frontOverhangCubit, source, note, layerIndex = 0 }) {
   const g = new THREE.Group(); g.name = key;
   const mat = getMaterial(material);
-  const h = FRAME.height;
+  // T11差し戻し(D1)対応: 枠そのものの高さ(FRAME.height)だけでなく、枠が載っている
+  // 台座(PEDESTAL_H)の分も屋根の基準高さに含める必要がある。枠上端の実際のワールドy
+  // は PEDESTAL_H + FRAME.height(=4.67m)であり、ここを FRAME.height(=4.45m)のみで
+  // 計算すると、たるみが無い(平らな)状態でも屋根が枠上端よりPEDESTAL_H(0.22m)分
+  // 低くなってしまうことを実測で確認したため修正した(下記の要確認参照)。
+  const h = PEDESTAL_H + FRAME.height;
   const xBack = TABERNACLE.xBack;
   const xEntrance = TABERNACLE.xEntrance;
+  const xVeil = TABERNACLE.xVeil;
   const zHalf = TABERNACLE.zHalf;
   const topLength = cub(topLengthCubit);
   const topWidth = zHalf * 2 + 0.02;
@@ -242,11 +248,29 @@ function buildRoofLayer({ key, nameJa, material, topLengthCubit, sideOverhangCub
   const gap = 0.025 * (layerIndex + 1);
   const topY = h + 0.05 + gap;
 
-  const topGeo = new THREE.PlaneGeometry(topLength, topWidth, 24, 8);
+  // T11差し戻し(D1)対応: 東西方向にも全幅を支持する構造がある位置(西壁=枠が全幅
+  // 連続、垂れ幕/入口の幕=柱の間を布が全幅つなぐ)では、たるみをその位置で0まで
+  // 抑え(ゲート)、そこから離れるほど通常のたるみに戻す。詳細・数値根拠は
+  // dimensions.js の ROOF_SAG_GATE_MARGIN_M コメントを参照。
+  const roofSagGates = [
+    { x: xBack, margin: ROOF_SAG_GATE_MARGIN_M },
+    { x: xVeil, margin: ROOF_SAG_GATE_MARGIN_M },
+    { x: xEntrance, margin: ROOF_SAG_GATE_MARGIN_M },
+  ];
+
+  const topCenterX = (xBack + xEntrance) / 2;
+  const topGeo = new THREE.PlaneGeometry(topLength, topWidth, 48, 8);
   applyWindFree(topGeo, 'none'); // 屋根上面は枠に載っているだけで揺れない
+  // T11: 南北壁の枠上端(topWidthのスパン)の間で自重によりたるむ(放物線、両端0)。
+  // rotation.x=-90°により、ここでのlocal z の変化がそのままワールドの-y(下方向)になる。
+  // gate: 西壁・垂れ幕・入口の幕の位置(ワールドx)ではたるみを0まで抑える。
+  applyRoofSag(topGeo, {
+    spanAxis: 'y', liftAxis: 'z', halfSpan: topWidth / 2, maxSag: ROOF.sagMaxM, liftSign: -1,
+    gateAxis: 'x', gateWorldOffset: topCenterX, gates: roofSagGates,
+  });
   const top = new THREE.Mesh(topGeo, mat);
   top.rotation.x = -Math.PI / 2;
-  top.position.set((xBack + xEntrance) / 2, topY, 0);
+  top.position.set(topCenterX, topY, 0);
   top.receiveShadow = top.castShadow = true;
   g.add(top);
 
@@ -265,6 +289,11 @@ function buildRoofLayer({ key, nameJa, material, topLengthCubit, sideOverhangCub
     const overhang = cub(backOverhangCubit);
     const geo = new THREE.PlaneGeometry(topWidth, overhang, 16, 12);
     applyWindFree(geo, 'roofDrape');
+    // T11差し戻し(D1)対応: 西壁(x=xBack)は屋根のゲートにより常にたるみ0(平ら)なので、
+    // この背面パネルの上端(取り付け部)もたるませる必要がなくなった。以前はtopの
+    // たるみに合わせて上端をずらしていたが、ゲート導入後はtopがx=xBackで平らな
+    // ままになるため、ここでは何もしない(元の垂直な垂れのまま)方が上端の高さが
+    // top側と一致し、継ぎ目も自然になる。
     const panel = new THREE.Mesh(geo, mat);
     panel.rotation.y = Math.PI / 2;
     panel.position.set(xBack - 0.01 - gap, topY - overhang / 2, 0);
@@ -273,17 +302,29 @@ function buildRoofLayer({ key, nameJa, material, topLengthCubit, sideOverhangCub
   }
   if (frontOverhangCubit) {
     const overhang = cub(frontOverhangCubit);
+    const flapCenterX = xEntrance + overhang / 2;
     const geo = new THREE.PlaneGeometry(overhang, topWidth, 8, 8);
     applyWindFree(geo, 'none'); // 入口上部で水平に垂れる折り返し部分。上下端の区別がないため揺らさない
+    // T11: 屋根上面から連続する1枚の布のため、継ぎ目(x=xEntrance)で折れが出ないよう
+    // topと同じたるみを適用する(要確認: 枠の無い入口上のこの部分にもたるみを
+    // 適用すべきかは本文に記載なし。継ぎ目の不自然な折れを避けるため適用した)。
+    // gateも同じものを使うため、入口の幕の柱(xEntrance)付近では自動的に平らになる。
+    applyRoofSag(geo, {
+      spanAxis: 'y', liftAxis: 'z', halfSpan: topWidth / 2, maxSag: ROOF.sagMaxM, liftSign: -1,
+      gateAxis: 'x', gateWorldOffset: flapCenterX, gates: roofSagGates,
+    });
     const flap = new THREE.Mesh(geo, mat);
     flap.rotation.x = -Math.PI / 2;
-    flap.position.set(xEntrance + overhang / 2, topY, 0);
+    flap.position.set(flapCenterX, topY, 0);
     flap.castShadow = flap.receiveShadow = true;
     g.add(flap);
   }
 
+  // A2(T11更新): 屋根形状の仮定は4層共通のため、各層の注記(個別にあれば連結)として表示する。
+  const shapeNote = 'A2: 平屋根＋自重のたるみ（本文に記載なし・仮定）';
+  const combinedNote = note ? `${shapeNote} / ${note}` : shapeNote;
   g.traverse((o) => {
-    if (o.isMesh) o.userData.info = makeInfo(nameJa, `覆い層（表示ON/OFF可）`, '', source, note);
+    if (o.isMesh) o.userData.info = makeInfo(nameJa, `覆い層（表示ON/OFF可）`, '', source, combinedNote);
   });
   return g;
 }

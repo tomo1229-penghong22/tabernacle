@@ -21,6 +21,60 @@ export const WIND_FREE_MAX = {
   none: 0,
 };
 
+// applyRoofSag: 屋根布(T11)が枠の上端の間で自重によりたるむ様子を頂点位置に
+// 焼き込む(放物線状、中央で最大・支持端で0)。実際の風揺れ(materials.jsの頂点
+// シェーダー)はこの「たるんだ形状」に対してさらに変位を加える(このジオメトリが
+// 風の基準姿勢になる)。
+//
+// spanAxis: たるみが変化する方向のローカル軸('x'|'y')。回転前のジオメトリで
+//   枠の間の未支持スパン(南北方向)に対応する軸を指定する。
+// liftAxis: たるみをワールド下方向として表現するために動かすローカル軸('y'|'z')。
+//   メッシュのrotationにより、この軸の変化がワールドの-y(重力方向)になるものを選ぶ。
+// halfSpan: spanAxis上での支持端までの距離(この位置でたるみ0)。
+// maxSag: スパン中央(spanAxis=0)での最大たるみ量(m)。
+// liftSign: liftAxisへ加える符号。ワールドで必ず下方向(-y)になるよう呼び出し側で指定する。
+// taperMin/taperMax: 指定時、liftAxis座標の値に応じてたるみ量を0〜1で線形に弱める
+//   (taperMinで0倍・taperMaxで1倍)。垂れ幕状のパネル(例: 背面の垂れ)で、上端は
+//   屋根のたるみに追従させつつ、下端(地面付近)は元の位置から動かさないために使う。
+// gateAxis/gateWorldOffset/gates: T11差し戻し(D1)対応。spanAxis方向(南北)だけでなく
+//   もう一方の水平方向(東西, 通常はワールドx)にも「全幅にわたる支持」がある場合に、
+//   その位置ではspanAxis方向のたるみ自体を0まで抑える(ゲート)。西壁(枠が隙間なく
+//   全幅を支持)・垂れ幕/入口の幕(柱の間を布が全幅つなぐ)がこれに当たる。
+//   gates: [{ x: 支持位置のワールドx, margin: そこから何mでたるみが100%に戻るか }]
+//   複数指定時は最も近い(最も厳しい)ものが効く(min)。滑らかにするためsmoothstepを使う。
+export function applyRoofSag(geometry, {
+  spanAxis, liftAxis, halfSpan, maxSag, liftSign = -1, taperMin, taperMax,
+  gateAxis, gateWorldOffset = 0, gates,
+}) {
+  const pos = geometry.attributes.position;
+  const hasTaper = taperMin != null && taperMax != null;
+  const hasGate = gates && gates.length > 0;
+  for (let i = 0; i < pos.count; i++) {
+    const s = spanAxis === 'x' ? pos.getX(i) : pos.getY(i);
+    const t = THREE.MathUtils.clamp(s / halfSpan, -1, 1);
+    let sag = maxSag * (1 - t * t); // 放物線: 端(|t|=1)で0, 中央(t=0)でmaxSag
+    if (hasTaper) {
+      const liftCoord = liftAxis === 'y' ? pos.getY(i) : pos.getZ(i);
+      const taper = THREE.MathUtils.clamp((liftCoord - taperMin) / (taperMax - taperMin), 0, 1);
+      sag *= taper;
+    }
+    if (hasGate) {
+      const gCoord = (gateAxis === 'x' ? pos.getX(i) : pos.getY(i)) + gateWorldOffset;
+      let gate = 1;
+      for (const g of gates) {
+        const f = THREE.MathUtils.clamp(Math.abs(gCoord - g.x) / g.margin, 0, 1);
+        const smooth = f * f * (3 - 2 * f); // smoothstep: 支持位置で0、marginで1
+        gate = Math.min(gate, smooth);
+      }
+      sag *= gate;
+    }
+    if (liftAxis === 'y') pos.setY(i, pos.getY(i) + liftSign * sag);
+    else pos.setZ(i, pos.getZ(i) + liftSign * sag);
+  }
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+}
+
 export function applyWindFree(geometry, kind) {
   geometry.computeBoundingBox();
   const { min, max } = geometry.boundingBox;
