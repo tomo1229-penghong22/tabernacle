@@ -113,16 +113,45 @@ function buildMetalTexture(baseColor) {
 }
 
 // --- 亜麻布（白地、必要に応じ縦縞で青紫緋を表現） --------------------------
+// T12: プラ板的な均一さをなくすため、経糸・緯糸を交互に明暗させる織り目と
+// 繊維の毛羽・むら(斑点ノイズ)を追加する。法線/ラフネス(凹凸・柔らかい光沢)は
+// buildLinenNormalMap/buildLinenRoughnessMapで別途生成する。
+// T12差し戻し(D2, 2026-09-25): 「ごわごわしすぎ」との判定を受け、上質な細い亜麻布
+// (出エジプト記の「上等の亜麻」)を狙って調整した。
+// 根拠(織りの細かさ): 実物の上質亜麻は目安として約150本/インチ程度(繊維の太さ
+// 数百μm)だが、そのままの縮尺(スパン数m〜十数mの布に対し1タイル1mm未満)では
+// テクスチャ解像度・タイリング回数が非現実的になりモアレの原因にもなるため、
+// 「近づくと織り目とわかる程度に細かい」を狙い、1タイルあたりの織り目本数を
+// 増やしつつ(THREAD_PXを半分に)、タイル自体の反復回数(repeat)も増やして
+// 見かけの糸の間隔を数mm〜1cm程度まで縮小した(以前は1タイルが壁全体に対して
+// 大きすぎ、織り目が粗いブロック状に見えていた)。
+const LINEN_THREAD_PX = 4;
+const LINEN_REPEAT = [8, 4];
 function buildLinenTexture(withStripes = false, withCherub = false) {
   const size = 256;
   const c = makeCanvas(size, size);
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#efe6d2';
   ctx.fillRect(0, 0, size, size);
-  // 織り目
-  ctx.strokeStyle = 'rgba(150,140,110,0.15)';
-  for (let i = 0; i < size; i += 3) {
+  // 織り目: 経糸・緯糸が交互に上に来る格子(市松状の明暗)＋グリッド線。
+  // 上質な亜麻は織り目の色ムラが目立たないため、コントラストは控えめにする。
+  for (let gy = 0; gy < size; gy += LINEN_THREAD_PX) {
+    for (let gx = 0; gx < size; gx += LINEN_THREAD_PX) {
+      const over = (Math.floor(gx / LINEN_THREAD_PX) + Math.floor(gy / LINEN_THREAD_PX)) % 2 === 0;
+      ctx.fillStyle = over ? 'rgba(255,252,240,0.05)' : 'rgba(120,110,85,0.05)';
+      ctx.fillRect(gx, gy, LINEN_THREAD_PX, LINEN_THREAD_PX);
+    }
+  }
+  ctx.strokeStyle = 'rgba(150,140,110,0.07)';
+  for (let i = 0; i < size; i += LINEN_THREAD_PX) {
     ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(size, i); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, size); ctx.stroke();
+  }
+  // 繊維の毛羽・むら: 遠目では滑らかに見えるよう、点数・不透明度を大きく抑える。
+  for (let i = 0; i < 700; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    ctx.fillStyle = Math.random() < 0.5 ? 'rgba(255,250,235,0.18)' : 'rgba(90,80,60,0.14)';
+    ctx.fillRect(x, y, 1, 1);
   }
   if (withStripes) {
     const colors = ['#2b3a8f', '#5b2a86', '#8f1d2c']; // 青・紫・緋
@@ -144,7 +173,88 @@ function buildLinenTexture(withStripes = false, withCherub = false) {
       ctx.fill();
     }
   }
-  return makeTexture(c, [2, 1]);
+  return makeTexture(c, LINEN_REPEAT);
+}
+
+// T12差し戻し(D2): 凹凸を控えめにするため、山の振幅・ノイズ量を以前の半分以下にした
+// (経糸・緯糸のコントラスト 1.0/0.35→0.4/0.15、毛羽ノイズ ±0.3→±0.08)。
+// 亜麻布の法線マップ(経糸・緯糸の織り目の凹凸)。ケルブ刺しゅうがある場合は
+// 該当位置(buildLinenTextureの柄と同じ楕円配置)に糸の盛り上がりを追加する。
+function buildLinenWeaveHeight(size, threadPx) {
+  const height = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const wx = (x % threadPx) / threadPx;
+      const wy = (y % threadPx) / threadPx;
+      const over = (Math.floor(x / threadPx) + Math.floor(y / threadPx)) % 2 === 0;
+      const bumpX = Math.sin(wx * Math.PI);
+      const bumpY = Math.sin(wy * Math.PI);
+      let h = over ? bumpX * 0.4 + bumpY * 0.15 : bumpY * 0.4 + bumpX * 0.15;
+      h += (Math.random() - 0.5) * 0.08; // 繊維の毛羽・むら(控えめ)
+      height[y * size + x] = h;
+    }
+  }
+  return height;
+}
+
+function addCherubEmbroideryBump(height, size) {
+  // ケルブ刺しゅう＝糸の盛り上がり。buildLinenTexture の柄(楕円2つ×4段)と同じ位置に凸を足す。
+  for (let i = 0; i < 4; i++) {
+    const cx = size / 2, cy = (i + 0.5) * (size / 4);
+    [[-24, Math.PI / 6], [24, -Math.PI / 6]].forEach(([dx, rot]) => {
+      const ex = cx + dx, ey = cy, rx = 20, ry = 8;
+      const yMin = Math.max(0, Math.floor(ey - ry - 4));
+      const yMax = Math.min(size, Math.ceil(ey + ry + 4));
+      const xMin = Math.max(0, Math.floor(ex - rx - 4));
+      const xMax = Math.min(size, Math.ceil(ex + rx + 4));
+      const cos = Math.cos(-rot), sin = Math.sin(-rot);
+      for (let y = yMin; y < yMax; y++) {
+        for (let x = xMin; x < xMax; x++) {
+          const lx = (x - ex) * cos - (y - ey) * sin;
+          const ly = (x - ex) * sin + (y - ey) * cos;
+          const d = (lx * lx) / (rx * rx) + (ly * ly) / (ry * ry);
+          if (d < 1) height[y * size + x] += (1 - d) * 1.8;
+        }
+      }
+    });
+  }
+}
+
+function buildLinenNormalMap(withCherub = false) {
+  const size = 256;
+  const height = buildLinenWeaveHeight(size, LINEN_THREAD_PX);
+  if (withCherub) addCherubEmbroideryBump(height, size);
+  // T12差し戻し(D2): 法線の強さを1.4→0.6に下げ、凹凸を控えめにした(「近づくと
+  // わかる程度」を狙い、遠目では平滑に見えるようにする)。
+  return heightFieldToNormalCanvas(height, size, 0.6);
+}
+
+// T12差し戻し(D2): 柔らかい光沢(しなやかさ)を保ちつつ、遠目でのムラを抑えるため
+// ラフネスのベース値を下げ(以前0.76〜0.94→0.59〜0.72)、変動幅も縮めた。
+function buildLinenRoughnessMap() {
+  const size = 256;
+  const blotchSize = 20;
+  const blotch = makeCanvas(blotchSize, blotchSize);
+  const bctx = blotch.getContext('2d');
+  const bimg = bctx.createImageData(blotchSize, blotchSize);
+  for (let i = 0; i < bimg.data.length; i += 4) {
+    const v = 150 + Math.random() * 35;
+    bimg.data[i] = bimg.data[i + 1] = bimg.data[i + 2] = v;
+    bimg.data[i + 3] = 255;
+  }
+  bctx.putImageData(bimg, 0, 0);
+
+  const c = makeCanvas(size, size);
+  const ctx = c.getContext('2d');
+  ctx.drawImage(blotch, 0, 0, size, size); // 拡大描画でにじませ、低周波のムラにする
+  const img = ctx.getImageData(0, 0, size, size);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 10;
+    const v = Math.max(0, Math.min(255, img.data[i] + n));
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
 }
 
 // --- ヤギ毛（黒褐色の粗い織り） ------------------------------------------
@@ -408,17 +518,32 @@ export function getMaterial(key) {
         map: buildMetalTexture([150, 95, 45]), color: 0xb5793a,
         roughness: 0.5, metalness: 0.8, envMapIntensity: 1.4,
       }));
+    // T12: 亜麻布。織り目の法線マップ・むらのあるラフネスマップ・柔らかく低い光沢
+    // (sheen)を追加してプラ板的な均一さをなくす。中庭の掛け布・入口幕も同じ
+    // マテリアルキー(linen/linenEntrance)を共有しているため自動的に適用される。
     case MATERIALS.LINEN:
-      return getOrBuild(key, () => new THREE.MeshStandardMaterial({
-        map: buildLinenTexture(false, false), roughness: 0.9, metalness: 0, side: THREE.DoubleSide,
+      return getOrBuild(key, () => new THREE.MeshPhysicalMaterial({
+        map: buildLinenTexture(false, false),
+        normalMap: makeTexture(buildLinenNormalMap(false), LINEN_REPEAT, false),
+        roughnessMap: makeTexture(buildLinenRoughnessMap(), LINEN_REPEAT, false),
+        roughness: 1.0, metalness: 0, side: THREE.DoubleSide,
+        sheen: 0.45, sheenRoughness: 0.62, sheenColor: new THREE.Color(0xfff3df),
       }));
     case MATERIALS.LINEN_CHERUB:
-      return getOrBuild(key, () => new THREE.MeshStandardMaterial({
-        map: buildLinenTexture(true, true), roughness: 0.9, metalness: 0, side: THREE.DoubleSide,
+      return getOrBuild(key, () => new THREE.MeshPhysicalMaterial({
+        map: buildLinenTexture(true, true),
+        normalMap: makeTexture(buildLinenNormalMap(true), LINEN_REPEAT, false), // ケルブ刺しゅう=糸の盛り上がり
+        roughnessMap: makeTexture(buildLinenRoughnessMap(), LINEN_REPEAT, false),
+        roughness: 1.0, metalness: 0, side: THREE.DoubleSide,
+        sheen: 0.45, sheenRoughness: 0.62, sheenColor: new THREE.Color(0xfff3df),
       }));
     case 'linenEntrance':
-      return getOrBuild(key, () => new THREE.MeshStandardMaterial({
-        map: buildLinenTexture(true, false), roughness: 0.9, metalness: 0, side: THREE.DoubleSide,
+      return getOrBuild(key, () => new THREE.MeshPhysicalMaterial({
+        map: buildLinenTexture(true, false),
+        normalMap: makeTexture(buildLinenNormalMap(false), LINEN_REPEAT, false),
+        roughnessMap: makeTexture(buildLinenRoughnessMap(), LINEN_REPEAT, false),
+        roughness: 1.0, metalness: 0, side: THREE.DoubleSide,
+        sheen: 0.45, sheenRoughness: 0.62, sheenColor: new THREE.Color(0xfff3df),
       }));
     case MATERIALS.GOAT_HAIR:
       return getOrBuild(key, () => new THREE.MeshStandardMaterial({
