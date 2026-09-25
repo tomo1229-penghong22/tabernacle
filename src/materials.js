@@ -112,6 +112,81 @@ function buildMetalTexture(baseColor) {
   return makeTexture(c, [4, 4]);
 }
 
+// --- 銀の台座: 鋳造肌（T13） -----------------------------------------------
+// ランダムな丸いブロブ(気泡跡・鋳造痕)を凹凸として重ねたハイトフィールドを作り、
+// そこから 色(凹部=黒ずみ寄り, 凸部=摩耗で光る明るい銀)・法線・ラフネス
+// (凸部=低ラフネスで光沢, 凹部=高ラフネスでくすむ) を一括生成する。
+// 経年による黒ずみ(WEATHER_CONFIGS[MATERIALS.SILVER])はこの上にさらに重なる。
+//
+// T13差し戻し(D2, 2026-09-25): 「金属感が足りない」との判定を受け、原因を切り分けた。
+// 切り分け結果(要確認: 人間の実ブラウザでの見た目を直接は確認できないため、以下は
+// コード上の値からの推測): (1)地色(darkRGB/worn)が中間グレーで暗すぎた
+// (150-232, さらにmaterial.colorの0xc7c9cfを掛けて実効的にさらに暗化)、
+// (2)ラフネスのベースが高すぎた(0.28〜0.78、平均的に見てもマットよりで
+// 光沢が弱い)、(3)法線マップの強さ(2.2)が模様のわりに強く、ハイライトが
+// 細かく散ってしまい「はっきりしたハイライト」ではなく「ざらついた質感」に
+// 見えやすかった、(4)自動テスト(ヘッドレス)経路ではPMREM環境マップが
+// 無効化されるため検証SSでは反射が弱く写る(本番の人間の閲覧では有効)。
+// 対策: 地色を明るくし(かつmaterial.colorを白に変更して二重に暗くしない)、
+// ラフネスを全体的に下げ(0.08〜0.42、磨かれた銀らしい低ラフネス側に寄せる)、
+// 法線強度を下げて(2.2→1.0)ハイライトが散らばりすぎないようにし、
+// metalness/envMapIntensityを上げて環境の映り込みを強めた(getMaterial側)。
+// 凹凸(鋳造痕)自体は「微細な凹凸」の要件を保つため、ブロブ数は維持しつつ
+// 振幅を半分程度に抑え、地色コントラストは保ったまま暗すぎないようにした。
+function buildSilverCastMaps() {
+  const size = 128;
+  const height = new Float32Array(size * size);
+  const blobCount = 90;
+  for (let b = 0; b < blobCount; b++) {
+    const cx = Math.random() * size, cy = Math.random() * size, r = 3 + Math.random() * 7;
+    const amp = (Math.random() - 0.4) * 0.6; // T13差し戻し: 振幅を1.2→0.6に縮小(凹凸を控えめに)
+    const yMin = Math.max(0, Math.floor(cy - r - 1));
+    const yMax = Math.min(size, Math.ceil(cy + r + 1));
+    const xMin = Math.max(0, Math.floor(cx - r - 1));
+    const xMax = Math.min(size, Math.ceil(cx + r + 1));
+    for (let y = yMin; y < yMax; y++) {
+      for (let x = xMin; x < xMax; x++) {
+        const d = Math.hypot(x - cx, y - cy) / r;
+        if (d < 1) height[y * size + x] += amp * (1 - d * d);
+      }
+    }
+  }
+  for (let i = 0; i < height.length; i++) height[i] += (Math.random() - 0.5) * 0.1; // 微細な地肌ノイズ(控えめ)
+
+  const normalCanvas = heightFieldToNormalCanvas(height, size, 1.0); // T13差し戻し: 2.2→1.0
+
+  let hMin = Infinity, hMax = -Infinity;
+  for (let i = 0; i < height.length; i++) { if (height[i] < hMin) hMin = height[i]; if (height[i] > hMax) hMax = height[i]; }
+  const range = Math.max(1e-6, hMax - hMin);
+
+  const colorCanvas = makeCanvas(size, size);
+  const cctx = colorCanvas.getContext('2d');
+  const cimg = cctx.createImageData(size, size);
+  const roughCanvas = makeCanvas(size, size);
+  const rctx = roughCanvas.getContext('2d');
+  const rimg = rctx.createImageData(size, size);
+  // T13差し戻し: 地色を明るい銀寄りに変更(凹部も黒ずみではなく落ち着いた明るい銀にする)。
+  const darkRGB = [188, 190, 196]; // 凹部: 控えめな陰
+  const worn = [240, 242, 248]; // 凸部: 摩耗で光る明るい銀(ほぼ白に近い)
+  for (let i = 0; i < height.length; i++) {
+    const t = Math.pow((height[i] - hMin) / range, 1.5); // 0=凹, 1=凸(摩耗)
+    const idx = i * 4;
+    cimg.data[idx] = darkRGB[0] + (worn[0] - darkRGB[0]) * t;
+    cimg.data[idx + 1] = darkRGB[1] + (worn[1] - darkRGB[1]) * t;
+    cimg.data[idx + 2] = darkRGB[2] + (worn[2] - darkRGB[2]) * t;
+    cimg.data[idx + 3] = 255;
+    // T13差し戻し: ラフネスを全体的に下げ(0.08〜0.42)、磨かれた銀らしい光沢に寄せる。
+    const rough = 255 * (0.42 - 0.34 * t);
+    const rv = Math.max(0, Math.min(255, rough));
+    rimg.data[idx] = rimg.data[idx + 1] = rimg.data[idx + 2] = rv;
+    rimg.data[idx + 3] = 255;
+  }
+  cctx.putImageData(cimg, 0, 0);
+  rctx.putImageData(rimg, 0, 0);
+
+  return { colorCanvas, normalCanvas, roughCanvas };
+}
+
 // --- 亜麻布（白地、必要に応じ縦縞で青紫緋を表現） --------------------------
 // T12: プラ板的な均一さをなくすため、経糸・緯糸を交互に明暗させる織り目と
 // 繊維の毛羽・むら(斑点ノイズ)を追加する。法線/ラフネス(凹凸・柔らかい光沢)は
@@ -502,11 +577,21 @@ export function getMaterial(key) {
         map: buildMetalTexture([212, 175, 55]), color: 0xd4af37,
         roughness: 0.32, metalness: 0.82, envMapIntensity: 1.6,
       }));
-    case MATERIALS.SILVER:
+    case MATERIALS.SILVER: {
+      // T13: 鋳造銀。微細な凹凸(気泡跡・打痕)から色/法線/ラフネスを生成し、
+      // 摩耗した凸部は明るく低ラフネス(光沢)、凹部はやや控えめな陰にする。
+      // 経年の黒ずみ(WEATHER_CONFIGS)はこの上にさらに重なる。環境反射はmain.jsの
+      // PMREM(RoomEnvironment)による簡易環境マップを使用(既存)。
+      // T13差し戻し(D2): 地色を二重に暗くしないようmaterial.colorは中立の白に変更、
+      // metalness/envMapIntensityを上げて「一目で磨かれた銀とわかる」反射を強めた。
+      const silverMaps = buildSilverCastMaps();
       return getOrBuild(key, () => new THREE.MeshStandardMaterial({
-        map: buildMetalTexture([200, 200, 205]), color: 0xc7c9cf,
-        roughness: 0.35, metalness: 0.85, envMapIntensity: 1.6,
+        map: makeTexture(silverMaps.colorCanvas, [5, 5]),
+        normalMap: makeTexture(silverMaps.normalCanvas, [5, 5], false),
+        roughnessMap: makeTexture(silverMaps.roughCanvas, [5, 5], false),
+        color: 0xffffff, roughness: 1.0, metalness: 0.96, envMapIntensity: 2.4,
       }));
+    }
     case MATERIALS.BRONZE:
       return getOrBuild(key, () => new THREE.MeshStandardMaterial({
         map: buildMetalTexture([150, 95, 45]), color: 0xb5793a,
