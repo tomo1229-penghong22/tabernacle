@@ -28,12 +28,41 @@ function noise(ctx, w, h, base, variance, alpha = 1) {
   ctx.putImageData(img, 0, 0);
 }
 
-function makeTexture(canvas, repeat = [1, 1]) {
+// isColor: 色(アルベド)テクスチャはsRGBでデコードする必要があるが、法線マップ/ラフネス
+// マップはデータ(線形)として扱うべきなのでcolorSpaceを設定しない(T12/T13)。
+function makeTexture(canvas, repeat = [1, 1], isColor = true) {
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(repeat[0], repeat[1]);
-  tex.colorSpace = THREE.SRGBColorSpace;
+  if (isColor) tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
+}
+
+// --- ハイトフィールド → 法線マップ変換（T12織り目・T13鋳造肌の共通ヘルパー） -----------
+function heightFieldToNormalCanvas(height, size, strength) {
+  const c = makeCanvas(size, size);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const hL = height[y * size + ((x - 1 + size) % size)];
+      const hR = height[y * size + ((x + 1) % size)];
+      const hD = height[((y - 1 + size) % size) * size + x];
+      const hU = height[((y + 1) % size) * size + x];
+      let nx = -(hR - hL) * strength;
+      let ny = -(hU - hD) * strength;
+      let nz = 1.0;
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      nx /= len; ny /= len; nz /= len;
+      const idx = (y * size + x) * 4;
+      img.data[idx] = Math.round((nx * 0.5 + 0.5) * 255);
+      img.data[idx + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+      img.data[idx + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
 }
 
 // --- 砂/礫の地面 --------------------------------------------------------
