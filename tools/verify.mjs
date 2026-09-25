@@ -19,7 +19,7 @@ const LOG_DIR = path.join(ROOT, 'log');
 const SCREEN_DIR = path.join(LOG_DIR, 'screens');
 fs.mkdirSync(SCREEN_DIR, { recursive: true });
 
-const PORT = 8080;
+const PORT = 8081; // 人間が閲覧中の8080を占有しないよう、検証専用に別ポートを使用
 const BASE = `http://localhost:${PORT}/index.html`;
 const FULL = `${BASE}?quality=full`;
 
