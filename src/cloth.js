@@ -102,6 +102,39 @@ export function applyWindFree(geometry, kind) {
   if (!geometry.attributes.pillarScreenMask) {
     geometry.setAttribute('pillarScreenMask', new THREE.BufferAttribute(new Float32Array(pos.count), 1));
   }
+  // T15: wallOutSign/drapeUV は壁際の屋根の垂れ(側面・背面)専用。既定は0
+  // (=壁情報なし。シェーダーは position を使い、内向き拘束もかけない)。
+  if (!geometry.attributes.wallOutSign) {
+    geometry.setAttribute('wallOutSign', new THREE.BufferAttribute(new Float32Array(pos.count), 1));
+  }
+  if (!geometry.attributes.drapeUV) {
+    geometry.setAttribute('drapeUV', new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2));
+  }
+}
+
+// T15: 壁際の屋根の垂れ(側面・背面、kind='roofDrape')専用の属性を焼き込む。
+//  - wallOutSign: ローカルz軸のうち壁の外側へ向かう向きの符号(+1/-1)。シェーダーは
+//    この値が非0の頂点だけ、ローカルzの変位のうち内向き成分を頭打ちにする。
+//  - drapeUV: 風の波の位相計算に使う「基準座標」(ローカルx, 高さy)。4層で同じ
+//    基準座標を持たせることで、層ごとの頂点位置・高さのずれ(外側へのオフセットや
+//    入口側の継ぎ目調整)があっても、同じ格子番号の頂点は4層で完全に同じ風変位を
+//    受ける。内側の層が外側の層より外へ出る(順序逆転)ことが構造的に起きない。
+//  - windFree: 垂れの高さ canonY を、4層共通の基準(yTopRef..yBotRef)で正規化して
+//    roofDrape の分布(上端0・下端最大、二乗)を与える(層ごとの垂れの長さの違いで
+//    同じ高さの自由度が層によって変わらないようにする)。
+// canonXY: 頂点ごとの基準座標(長さ pos.count*2 の配列、[x0,y0,x1,y1,...])。
+export function applyRoofDrapeWall(geometry, { outSign, canonXY, yTopRef, yBotRef }) {
+  const pos = geometry.attributes.position;
+  const free = new Float32Array(pos.count);
+  const sign = new Float32Array(pos.count).fill(outSign);
+  const uv = new Float32Array(canonXY);
+  for (let i = 0; i < pos.count; i++) {
+    const v = THREE.MathUtils.clamp((canonXY[i * 2 + 1] - yBotRef) / (yTopRef - yBotRef), 0, 1);
+    free[i] = WIND_FREE_MAX.roofDrape * Math.pow(1 - v, 2);
+  }
+  geometry.setAttribute('windFree', new THREE.BufferAttribute(free, 1));
+  geometry.setAttribute('wallOutSign', new THREE.BufferAttribute(sign, 1));
+  geometry.setAttribute('drapeUV', new THREE.BufferAttribute(uv, 2));
 }
 
 // T14: 入口の幕(width方向)の頂点グリッドが、柱の近くで「辺(隣接頂点間)が柱を

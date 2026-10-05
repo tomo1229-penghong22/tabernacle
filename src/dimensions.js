@@ -75,6 +75,19 @@ export const FRAME = {
   socketsPerFrame: 2, // A4
 };
 
+// T15: 銀の台座(枠の下、枠1枚につき2個)の実装寸法。tabernacle.js の addSilverSocket と
+// 屋根の垂れの配置(roofLayout.js)・検証(tools/verify_t15.mjs)が同じ値を参照する。
+export const PEDESTAL_H = 0.22; // 台座の高さ（実装上の細部）
+export const FRAME_SOCKET_W_RATIO = 0.3; // 枠1枚の台座の基準幅 = FRAME.width × この比
+export function silverSocketSize(w) { return { w: w * 0.9, h: PEDESTAL_H, d: w * 0.9 }; } // wは基準幅
+// 枠の中心面から壁面外向きに見た、枠・台座の外面までの距離を「壁の内側ライン(南北壁なら
+// z=zHalf、西壁なら x=xBack)」を基準に返す。枠の板は内側ラインから外へ thickness 分、
+// 台座は枠の板厚中央を中心に正方形(幅0.9×基準幅)で置かれるため外へ突き出す場合がある。
+export function frameOuterExtentM() {
+  const socketHalf = silverSocketSize(FRAME.width * FRAME_SOCKET_W_RATIO).d / 2;
+  return Math.max(FRAME.thickness, FRAME.thickness / 2 + socketHalf);
+}
+
 export const TABERNACLE = {
   // 内寸境界（キュビト）: 至聖所 x∈[-30,-20], 聖所 x∈[-20,0], 幅 z∈[-5,5], 高さ y∈[0,10]
   innerLengthCubit: 30,
@@ -158,6 +171,15 @@ export const TABERNACLE = {
 // あり、両端をこの幅だけ平らにしても「中程度にはっきり弧を描く」区間が十分残る
 // (それぞれ約2.05m・6.5m)。
 export const ROOF_SAG_GATE_MARGIN_M = 1.2;
+// T15: 側面・背面の垂れ4層の配置。最内層(亜麻布)は枠・台座の外面から drapeClearM、
+// 以降は層ごとに drapeStepM ずつ外側へ置く(壁の内側ラインからの距離は
+// frameOuterExtentM() + drapeClearM + drapeStepM × 層番号)。
+// 風で壁の内側へ向かう揺れは、頂点シェーダーで ROOF_DRAPE_INWARD_CAP_M 未満に
+// 頭打ちにする(全層で同じ式・同じ入力なので層の重なり順も保たれる)。
+// 条件: ROOF_DRAPE_INWARD_CAP_M < drapeClearM (最内層も枠・台座の外面に届かない)。
+export const ROOF_DRAPE_CLEAR_M = 0.03;
+export const ROOF_DRAPE_STEP_M = 0.03;
+export const ROOF_DRAPE_INWARD_CAP_M = 0.015;
 export const ROOF = {
   sagMaxM: 0.35,
   innerLinen: {

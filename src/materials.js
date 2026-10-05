@@ -8,7 +8,7 @@
 // setWeathering()/setWind()/setRainAmount() を呼ぶだけで全マテリアルに反映される。
 
 import * as THREE from 'three';
-import { MATERIALS, TABERNACLE, FRAME, PILLAR_CLEARANCE_GAP_M } from './dimensions.js';
+import { MATERIALS, TABERNACLE, FRAME, PILLAR_CLEARANCE_GAP_M, ROOF_DRAPE_INWARD_CAP_M } from './dimensions.js';
 
 function makeCanvas(w, h) {
   const c = document.createElement('canvas');
@@ -473,11 +473,14 @@ function injectEnv(material, cfg) {
       attribute float windFree;
       attribute float pillarGate;
       attribute float pillarScreenMask;
+      attribute float wallOutSign;
+      attribute vec2 drapeUV;
       uniform float uWindSpeed, uTime;
       uniform vec2 uWindDir;
       const float PILLAR_GAP_M = ${PILLAR_CLEARANCE_GAP_M};
       const float PILLAR_GATE_SAFETY = 0.8;
-      const float SAFE_ALONG_M = 0.1;`; // T14: 数値の根拠はcloth.js/log/t14_report.md参照
+      const float SAFE_ALONG_M = 0.1;
+      const float DRAPE_INWARD_CAP_M = ${ROOF_DRAPE_INWARD_CAP_M};`; // T14: 数値の根拠はcloth.js/log/t14_report.md参照
     }
     shader.vertexShader = shader.vertexShader.replace('#include <common>', vertCommon);
 
@@ -494,11 +497,15 @@ function injectEnv(material, cfg) {
         float windToDot = vEnvWorldNormal.x * uWindDir.x + vEnvWorldNormal.z * uWindDir.y;
         float push = clamp(-windToDot, 0.0, 1.0);
         float flutterBias = clamp(windToDot, 0.0, 1.0);
-        float wave = sin(position.x * 2.2 + position.y * 1.3 + uTime * 2.6) * 0.6
-                   + sin(position.x * 5.1 - uTime * 4.3) * 0.4;
+        // T15: wallOutSign!=0 (壁際の屋根の垂れ)の頂点だけ、波の位相に position ではなく
+        // 4層共通の基準座標 drapeUV を使う。0(他の布)では mix(position.xy, ., 0) = position.xy
+        // で恒等。
+        vec2 wp = mix(position.xy, drapeUV, abs(wallOutSign));
+        float wave = sin(wp.x * 2.2 + wp.y * 1.3 + uTime * 2.6) * 0.6
+                   + sin(wp.x * 5.1 - uTime * 4.3) * 0.4;
         float mag = amp * windFree;
         vec3 disp = vec3(uWindDir.x, 0.0, uWindDir.y) * mag * (push * 0.5 + (0.5 + flutterBias) * wave);
-        disp.y += mag * 0.25 * sin(uTime * 6.0 + position.x * 7.0 + position.y * 3.0);
+        disp.y += mag * 0.25 * sin(uTime * 6.0 + wp.x * 7.0 + wp.y * 3.0);
         // T14: pillarGate(0=柱情報なし/柱から離れている, 1=柱の位置)、
         // pillarScreenMask(0=柱情報なし, 1=入口の幕メッシュ全体で一定)。この材質は
         // 複数の布種別(壁掛け布・屋根垂れ等)で共有されているため、必ずジオメトリ側の
@@ -523,6 +530,14 @@ function injectEnv(material, cfg) {
           : -SAFE_ALONG_M * (1.0 - exp(disp.x / SAFE_ALONG_M));
         disp.x = mix(disp.x, alongCapped, pillarScreenMask);
         disp.x = mix(disp.x, 0.0, pillarGate);
+        // T15: 壁際の屋根の垂れ(wallOutSign=±1: ローカルzのうち壁の外へ向かう向きの符号)。
+        // 壁の内側(枠側)へ向かう変位(outward<0)を DRAPE_INWARD_CAP_M 未満に滑らかに
+        // 頭打ちにする。外側(outward>0)は従来のまま。wallOutSign=0 の布は mix の重み0で
+        // 変位がそのまま残る。disp.x(沿面)・disp.y(上下)は壁に対して平行/垂直で
+        // 枠の外面へ向かう成分がないため拘束しない。
+        float outward = disp.z * wallOutSign;
+        float outwardCapped = outward >= 0.0 ? outward : -DRAPE_INWARD_CAP_M * (1.0 - exp(outward / DRAPE_INWARD_CAP_M));
+        disp.z = mix(disp.z, outwardCapped * wallOutSign, abs(wallOutSign));
         transformed += disp;
       }`;
     }
