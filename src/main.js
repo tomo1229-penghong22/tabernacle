@@ -10,7 +10,7 @@ import { setupUI } from './ui.js';
 import { COURTYARD, FRAME, TABERNACLE, FURNITURE } from './dimensions.js';
 import {
   setWeathering, setWind, setRainAmount, updateEnvAnimation,
-  getWindToVector, getRainAmount, ENV_UNIFORMS,
+  getWindToVector, getRainAmount, ENV_UNIFORMS, setPointLightBounds,
 } from './materials.js';
 import { buildDustSystem, buildRainSystem } from './particles.js';
 
@@ -58,6 +58,7 @@ controls.orbit.update();
 const courtyard = buildCourtyard(scene, controls);
 const tabernacle = buildTabernacle(scene, controls);
 const furniture = buildFurniture(scene);
+setPointLightBounds(scene); // T16: 点光源の届く範囲(燭台周辺)の外では点光源の計算を飛ばす
 
 const ui = setupUI({ camera, renderer, controls, environment, tabernacle });
 

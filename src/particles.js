@@ -13,7 +13,8 @@ export function buildDustSystem(scene) {
     positions[i * 3 + 2] = (Math.random() - 0.5) * BOUNDS.z * 2;
   }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  // T16: 毎フレーム更新するバッファは DynamicDrawUsage にする(実GPU/ANGLEで更新時の同期待ちを避ける)
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
   const mat = new THREE.PointsMaterial({
     color: 0xc8a86a, size: 0.12, transparent: true, opacity: 0.35,
     depthWrite: false, sizeAttenuation: true,
@@ -57,7 +58,7 @@ export function buildRainSystem(scene) {
     resetDrop(i, positions, velocities, true);
   }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage)); // T16: 毎フレーム更新
   geo.setDrawRange(0, 0);
   const mat = new THREE.LineBasicMaterial({ color: 0xaecbe0, transparent: true, opacity: 0.5, depthWrite: false });
   const lines = new THREE.LineSegments(geo, mat);

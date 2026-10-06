@@ -387,7 +387,26 @@ export const ENV_UNIFORMS = {
   uWetness: { value: 0 }, // 即時降雨による濡れ 0-1（数十秒で乾く）
   uTabBounds: { value: new THREE.Vector4(TABERNACLE.xBack, TABERNACLE.xEntrance, -TABERNACLE.zHalf, TABERNACLE.zHalf) },
   uTabRoofY: { value: FRAME.height + 0.6 },
+  // T16: 全点光源の届く範囲の球(xyz=中心(ワールド), w=半径)。既定は全域(=従来どおり常に計算)。
+  uPointLightSphere: { value: new THREE.Vector4(0, 0, 0, 1e9) },
 };
+
+// T16: シーン内の全PointLightを覆う球を計算してシェーダーへ渡す。光源が静止している前提
+// (燭台のともしびは動かない)。distance=0(無限遠まで届く)の光源があれば全域のまま。
+export function setPointLightBounds(scene) {
+  const lights = [];
+  scene.updateMatrixWorld(true);
+  scene.traverse((o) => { if (o.isPointLight) lights.push(o); });
+  if (!lights.length) { ENV_UNIFORMS.uPointLightSphere.value.set(0, 0, 0, -1); return; }
+  const pos = lights.map((l) => new THREE.Vector3().setFromMatrixPosition(l.matrixWorld));
+  if (lights.some((l) => !(l.distance > 0))) { ENV_UNIFORMS.uPointLightSphere.value.set(0, 0, 0, 1e9); return; }
+  const c = new THREE.Vector3();
+  pos.forEach((p) => c.add(p));
+  c.multiplyScalar(1 / pos.length);
+  let r = 0;
+  lights.forEach((l, i) => { r = Math.max(r, c.distanceTo(pos[i]) + l.distance); });
+  ENV_UNIFORMS.uPointLightSphere.value.set(c.x, c.y, c.z, r + 0.05);
+}
 
 // 経年・日射・降雨頻度（T6 F3/F4）。ageYearsは0-40。
 export function setWeathering(ageYears, sunIntensity, rainFreq) {
@@ -450,6 +469,26 @@ const WEATHER_CONFIGS = {
   [MATERIALS.WOOD]: { fade: 0x2a1c10, fadeAmt: 0.3, dirt: 0.4 },
   [MATERIALS.SAND]: { dirt: 0, puddle: true },
 };
+
+// T16: three.js 標準の lights_fragment_begin のうち、点光源ループ内の RE_Direct 呼び出しだけを
+// `if ( directLight.visible )` で囲んだもの。directLight.visible は getPointLightInfo が
+// 「減衰後の色が0でない」ときだけ true にする(three.js 本体の定義)。色が0なら RE_Direct の
+// 寄与はすべて irradiance(=dotNL*色)に比例して0になるため、飛ばしても出力は変わらない。
+// 置換対象が見つからない(three.js の版が変わった)場合は元のチャンクをそのまま使う。
+const LIGHTS_FRAGMENT_BEGIN_SKIP_DARK_POINT = (() => {
+  const src = THREE.ShaderChunk.lights_fragment_begin;
+  const re = /(getPointLightInfo\( pointLight, geometryPosition, directLight \);[\s\S]*?)(RE_Direct\( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight \);)/;
+  const open = '#if ( NUM_POINT_LIGHTS > 0 ) && defined( RE_Direct )\n\tPointLight pointLight;';
+  const close = '\t#pragma unroll_loop_end\n#endif\n#if ( NUM_SPOT_LIGHTS > 0 ) && defined( RE_Direct )';
+  if (!re.test(src) || !src.includes(open) || !src.includes(close)) return '#include <lights_fragment_begin>';
+  // 点光源すべての届く範囲(球)の外では、点光源ループ全体を飛ばす(球の外では全光源の減衰が厳密に0)。
+  const guardOpen = open + '\n\tif ( distance( vEnvWorldPos, uPointLightSphere.xyz ) < uPointLightSphere.w ) {';
+  // three.js の unroll_loop は「}」+「#pragma unroll_loop_end」の並びを探すため、外側の閉じ括弧は pragma の後ろに置く
+  const guardClose = '\t#pragma unroll_loop_end\n\t}\n#endif\n#if ( NUM_SPOT_LIGHTS > 0 ) && defined( RE_Direct )';
+  return src.replace(re, (m, a, b) => a + 'if ( directLight.visible ) ' + b)
+    .replace(open, () => guardOpen)
+    .replace(close, () => guardClose);
+})();
 
 // injectEnv: onBeforeCompile でマテリアルに経年/天候/風/雨のシェーダーコードを追加する。
 function injectEnv(material, cfg) {
@@ -551,6 +590,7 @@ function injectEnv(material, cfg) {
     uniform vec3 uFade, uWear;
     uniform vec4 uTabBounds;
     uniform float uTabRoofY;
+    uniform vec4 uPointLightSphere;
     float envHash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
     `;
     shader.fragmentShader = shader.fragmentShader.replace('#include <common>', fragCommon);
@@ -585,6 +625,9 @@ function injectEnv(material, cfg) {
     }
     `;
     shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', envColorBlock + '#include <dithering_fragment>');
+    // T16: 点光源(燭台の7つのともしび、距離4mで減衰が厳密に0になる)の寄与が0のフラグメントでは
+    // RE_Direct(PBR計算)を丸ごと飛ばす。寄与0なら結果は同一(irradiance=0)で見た目は変わらない。
+    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_begin>', LIGHTS_FRAGMENT_BEGIN_SKIP_DARK_POINT);
 
     material.userData.shader = shader;
   };
